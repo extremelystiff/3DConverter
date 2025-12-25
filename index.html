@@ -3,22 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Universal 3D Converter (+FBX)</title>
+    <title>3D Universal Converter (Textures + Daz/Poser)</title>
     
-    <!-- Bootstrap for UI -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
 
-    <!-- Polyfills for Mobile/iOS Support -->
     <script async src="https://ga.jspm.io/npm:es-module-shims@1.8.0/dist/es-module-shims.js"></script>
 
-    <!-- Import Map -->
     <script type="importmap">
     {
         "imports": {
             "three": "https://esm.sh/three@0.160.0",
             "three/addons/": "https://esm.sh/three@0.160.0/examples/jsm/", 
-            "three-bvh-csg": "https://esm.sh/three-bvh-csg@0.0.16?deps=three@0.160.0",
             "fflate": "https://esm.sh/fflate@0.8.2"
         }
     }
@@ -26,53 +22,42 @@
 
     <style>
         body { background-color: #121212; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; height: 100vh; overflow: hidden; }
-        
-        /* Sidebar */
-        .sidebar {
-            width: 350px; background: #1e1e1e; border-right: 1px solid #333;
-            display: flex; flex-direction: column; padding: 20px; z-index: 10;
-            box-shadow: 2px 0 10px rgba(0,0,0,0.5);
-        }
-        
-        /* Viewer Area */
+        .sidebar { width: 360px; background: #1e1e1e; border-right: 1px solid #333; display: flex; flex-direction: column; padding: 20px; z-index: 10; box-shadow: 2px 0 10px rgba(0,0,0,0.5); }
         .viewer { flex: 1; position: relative; background: radial-gradient(circle at center, #2a2a2a 0%, #111 100%); }
-        
-        /* Controls */
         .form-control, .form-select { background: #2c2c2c; border: 1px solid #444; color: white; }
         .form-control:focus, .form-select:focus { background: #333; color: white; border-color: #0d6efd; box-shadow: none; }
-        
-        /* Status Overlay */
-        #status-overlay {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.8); z-index: 100; display: none;
-            flex-direction: column; justify-content: center; align-items: center;
-        }
-        
-        .drop-zone {
-            border: 2px dashed #444; border-radius: 10px; padding: 30px; text-align: center;
-            margin-bottom: 20px; transition: all 0.2s; cursor: pointer;
-        }
+        #status-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 100; display: none; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+        .drop-zone { border: 2px dashed #444; border-radius: 10px; padding: 25px; text-align: center; margin-bottom: 20px; transition: all 0.2s; cursor: pointer; }
         .drop-zone:hover { border-color: #0d6efd; background: #252525; }
         .drop-zone.dragover { border-color: #0d6efd; background: #2a2a3a; }
+        .texture-badge { font-size: 0.7rem; background: #333; padding: 2px 6px; border-radius: 4px; margin-left: 5px; }
     </style>
 </head>
 <body class="d-flex">
 
-    <!-- SIDEBAR CONTROLS -->
     <div class="sidebar">
-        <h4 class="mb-4 text-primary"><i class="bi bi-arrow-repeat"></i> 3D Converter</h4>
+        <h4 class="mb-4 text-primary"><i class="bi bi-layers-half"></i> 3D Pro Converter</h4>
         
         <!-- INPUT -->
-        <div class="mb-4">
-            <label class="form-label text-muted small fw-bold">1. IMPORT FILE</label>
+        <div class="mb-3">
+            <label class="form-label text-muted small fw-bold">1. IMPORT (SELECT ALL FILES)</label>
             <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
-                <i class="bi bi-cloud-upload fs-1 text-secondary"></i>
-                <div class="mt-2 small text-muted">Click or Drop File<br>(STL, OBJ, FBX, GLB, USDZ)</div>
+                <i class="bi bi-folder2-open fs-1 text-secondary"></i>
+                <div class="mt-2 small text-muted">
+                    Drop Model <b>AND</b> Textures<br>
+                    <span style="font-size: 0.75rem; opacity: 0.7;">(STL, OBJ+MTL, FBX, DAE, GLB)</span>
+                </div>
             </div>
-            <!-- Added .fbx to accept attribute -->
-            <input type="file" id="file-input" class="d-none" accept=".stl,.obj,.fbx,.glb,.gltf,.usdz">
-            <div id="file-info" class="alert alert-dark border-secondary p-2 small d-none">
-                <i class="bi bi-file-earmark-check"></i> <span id="file-name">Loaded</span>
+            <!-- Added multiple attribute to accept model + textures at once -->
+            <input type="file" id="file-input" class="d-none" multiple accept=".stl,.obj,.mtl,.fbx,.glb,.gltf,.usdz,.dae,.png,.jpg,.jpeg,.tga">
+            
+            <div id="file-list" class="d-none">
+                <div class="alert alert-dark border-secondary p-2 small mb-1">
+                    <i class="bi bi-box-seam"></i> <span id="model-name">Model</span>
+                </div>
+                <div class="text-end text-muted small">
+                    <span id="texture-count">0</span> textures found
+                </div>
             </div>
         </div>
 
@@ -82,48 +67,47 @@
             <div class="mb-3">
                 <label class="small">Target Format</label>
                 <select id="export-format" class="form-select">
-                    <option value="stl">STL (3D Printing)</option>
-                    <option value="obj">OBJ (Standard)</option>
-                    <option value="glb">GLB (Android AR / Web)</option>
+                    <option value="glb">GLB (Best for Textures/AR)</option>
                     <option value="usdz">USDZ (Apple AR)</option>
+                    <option value="obj">OBJ (Geometry + MTL)</option>
+                    <option value="stl">STL (Geometry Only)</option>
                 </select>
             </div>
             
             <div class="form-check form-switch mb-3">
                 <input class="form-check-input" type="checkbox" id="ar-scale" checked>
                 <label class="form-check-label small" for="ar-scale">
-                    <strong>AR Scale Fix</strong> (mm &rarr; m)<br>
-                    <span class="text-muted" style="font-size:0.75rem">Uncheck for 3D Printing (1:1)</span>
+                    <strong>AR Scale Fix</strong> (mm &rarr; m)
                 </label>
             </div>
         </div>
 
-        <!-- ACTION -->
         <button id="btn-convert" class="btn btn-primary w-100 py-2" disabled onclick="window.convert()">
             <i class="bi bi-download"></i> Convert & Download
         </button>
     </div>
 
-    <!-- 3D VIEWER -->
     <div class="viewer" id="viewer-container"></div>
 
-    <!-- LOADING OVERLAY -->
     <div id="status-overlay">
         <div class="spinner-border text-primary mb-3" style="width: 3rem; height: 3rem;"></div>
         <h5 class="text-white" id="status-text">Processing...</h5>
+        <small class="text-muted" id="status-sub">Mapping textures...</small>
     </div>
 
-    <!-- LOGIC -->
     <script type="module">
         import * as THREE from "three";
         import { OrbitControls } from "three/addons/controls/OrbitControls.js";
         
         // Loaders
         import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+        import { MTLLoader } from "three/addons/loaders/MTLLoader.js"; // For OBJ Materials
         import { STLLoader } from "three/addons/loaders/STLLoader.js";
         import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
         import { USDZLoader } from "three/addons/loaders/USDZLoader.js";
-        import { FBXLoader } from "three/addons/loaders/FBXLoader.js"; // Added FBX Loader
+        import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
+        import { ColladaLoader } from "three/addons/loaders/ColladaLoader.js"; // For DAE (Daz/Poser)
+        import { TGALoader } from "three/addons/loaders/TGALoader.js"; // For older textures
         
         // Exporters
         import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
@@ -133,48 +117,41 @@
 
         // GLOBALS
         let scene, camera, renderer, controls;
-        let currentMesh = null;
+        let currentModel = null;
         let originalFileName = "model";
+        let blobMap = {}; // Maps filenames to Blob URLs
+        let textureCount = 0;
 
         // --- 1. INITIALIZE VIEWER ---
         function init() {
             const container = document.getElementById("viewer-container");
-            
-            // Scene
             scene = new THREE.Scene();
-            scene.background = null; 
             
             // Camera
             camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.01, 1000);
-            camera.position.set(5, 5, 5);
+            camera.position.set(2, 2, 4);
             
-            // Renderer
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            // Renderer (PreserveDrawingBuffer needed for some exports)
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
             renderer.setSize(container.clientWidth, container.clientHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.outputColorSpace = THREE.SRGBColorSpace; // Correct color for textures
             container.appendChild(renderer.domElement);
             
             // Controls
             controls = new OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
-            controls.autoRotate = true;
-            controls.autoRotateSpeed = 1.0;
 
-            // Lights
-            const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+            // Lighting (Brightened for Textures)
+            const ambient = new THREE.AmbientLight(0xffffff, 1.0);
             scene.add(ambient);
-            const dirLight = new THREE.DirectionalLight(0xffffff, 1);
-            dirLight.position.set(5, 10, 7);
-            scene.add(dirLight);
-            const backLight = new THREE.DirectionalLight(0xffffff, 0.5);
-            backLight.position.set(-5, -5, -5);
-            scene.add(backLight);
+            const mainLight = new THREE.DirectionalLight(0xffffff, 1.5);
+            mainLight.position.set(5, 10, 7);
+            scene.add(mainLight);
 
-            // Grid
             const grid = new THREE.GridHelper(10, 20, 0x444444, 0x222222);
             scene.add(grid);
 
-            // Resize
             window.addEventListener('resize', () => {
                 camera.aspect = container.clientWidth / container.clientHeight;
                 camera.updateProjectionMatrix();
@@ -190,129 +167,209 @@
             renderer.render(scene, camera);
         }
 
-        // --- 2. FILE LOADING ---
-        window.handleFile = async function(file) {
-            showStatus("Loading Model...");
-            originalFileName = file.name.split('.')[0];
+        // --- 2. FILE HANDLING STRATEGY ---
+        window.handleFiles = async function(fileList) {
+            showStatus("Analyzing Files...", "Sorting geometry and textures");
             
-            const ext = file.name.split('.').pop().toLowerCase();
-            const reader = new FileReader();
+            // Reset
+            if(currentModel) { scene.remove(currentModel); currentModel = null; }
+            blobMap = {};
+            textureCount = 0;
+            let mainFile = null;
+            let mtlFile = null;
 
-            reader.onload = async (e) => {
-                try {
-                    let geometry;
-                    const buffer = e.target.result;
+            // 1. Sort files into map and identify main model
+            for (let i = 0; i < fileList.length; i++) {
+                const file = fileList[i];
+                const ext = file.name.split('.').pop().toLowerCase();
+                
+                // Create Blob URL
+                const url = URL.createObjectURL(file);
+                blobMap[file.name] = url; // Exact match
+                blobMap[file.name.toLowerCase()] = url; // Case insensitive match safety
 
-                    // Remove old mesh
-                    if(currentMesh) { scene.remove(currentMesh); currentMesh = null; }
-
-                    // PARSE
-                    if (ext === 'stl') {
-                        geometry = new STLLoader().parse(buffer);
-                    } else if (ext === 'obj') {
-                        const text = new TextDecoder().decode(buffer);
-                        const group = new OBJLoader().parse(text);
-                        group.traverse(c => { if(c.isMesh && !geometry) geometry = c.geometry; });
-                    } else if (ext === 'glb' || ext === 'gltf') {
-                        await new Promise(resolve => {
-                            new GLTFLoader().parse(buffer, '', (gltf) => {
-                                gltf.scene.traverse(c => { if(c.isMesh && !geometry) geometry = c.geometry; });
-                                resolve();
-                            });
-                        });
-                    } else if (ext === 'usdz') {
-                        const group = new USDZLoader().parse(buffer);
-                        group.traverse(c => { if(c.isMesh && !geometry) geometry = c.geometry; });
-                    } else if (ext === 'fbx') {
-                        // NEW FBX HANDLING
-                        const group = new FBXLoader().parse(buffer, '');
-                        // Find the first valid mesh
-                        group.traverse(c => { if(c.isMesh && !geometry) geometry = c.geometry; });
-                    }
-
-                    if (!geometry) throw new Error("No geometry found in file.");
-
-                    // NORMALIZE & ADD TO SCENE
-                    geometry.computeVertexNormals();
-                    geometry.center();
-                    
-                    // Auto-Scale Visualization (Fit to View)
-                    geometry.computeBoundingBox();
-                    const size = geometry.boundingBox.getSize(new THREE.Vector3());
-                    const maxDim = Math.max(size.x, size.y, size.z);
-                    let scale = 3 / maxDim; // Fit into roughly 3 units
-                    
-                    const material = new THREE.MeshStandardMaterial({ 
-                        color: 0x0d6efd, roughness: 0.4, metalness: 0.1, side: THREE.DoubleSide 
-                    });
-                    
-                    currentMesh = new THREE.Mesh(geometry, material);
-                    
-                    // Store raw geometry for export (don't bake visual scale)
-                    currentMesh.userData.originalGeometry = geometry.clone();
-                    
-                    // Apply Visual Scale
-                    currentMesh.scale.set(scale, scale, scale);
-                    
-                    scene.add(currentMesh);
-                    
-                    // UI Updates
-                    document.getElementById('file-info').classList.remove('d-none');
-                    document.getElementById('file-name').innerText = file.name;
-                    document.getElementById('btn-convert').disabled = false;
-                    hideStatus();
-
-                } catch (err) {
-                    console.error(err);
-                    alert("Error loading file: " + err.message);
-                    hideStatus();
+                if (['jpg','jpeg','png','tga','bmp','webp'].includes(ext)) {
+                    textureCount++;
+                } else if (ext === 'mtl') {
+                    mtlFile = file;
+                } else if (['obj','fbx','dae','glb','gltf','stl','usdz'].includes(ext)) {
+                    mainFile = file;
+                    originalFileName = file.name.split('.')[0];
                 }
-            };
+            }
 
-            // Read as Text for OBJ, ArrayBuffer for everything else (including FBX)
-            if (ext === 'obj') reader.readAsArrayBuffer(file); 
-            else reader.readAsArrayBuffer(file);
+            if (!mainFile) {
+                alert("No supported 3D model file found (OBJ, FBX, DAE, GLB, STL).");
+                hideStatus();
+                return;
+            }
+
+            // UI Update
+            document.getElementById('file-list').classList.remove('d-none');
+            document.getElementById('model-name').innerText = mainFile.name;
+            document.getElementById('texture-count').innerText = textureCount;
+
+            loadModel(mainFile, mtlFile);
         };
 
-        // --- 3. CONVERSION & EXPORT ---
+        // --- 3. LOADING LOGIC ---
+        async function loadModel(mainFile, mtlFile) {
+            showStatus("Loading Model...", "Parsing geometry and materials");
+
+            // Custom Loading Manager to intercept texture requests
+            const manager = new THREE.LoadingManager();
+            
+            // URL MODIFIER: The magic that finds textures
+            manager.setURLModifier((url) => {
+                // Remove path, get just filename
+                const fileName = url.split('/').pop().split('\\').pop(); 
+                
+                // Look up in our blob map
+                if (blobMap[fileName]) return blobMap[fileName];
+                if (blobMap[fileName.toLowerCase()]) return blobMap[fileName.toLowerCase()];
+                
+                return url;
+            });
+            
+            manager.addHandler(/\.tga$/i, new TGALoader());
+
+            const ext = mainFile.name.split('.').pop().toLowerCase();
+            const buffer = await mainFile.arrayBuffer();
+
+            try {
+                let object;
+
+                if (ext === 'obj') {
+                    // Special Handling for OBJ+MTL
+                    if (mtlFile) {
+                        const mtlText = await mtlFile.text();
+                        const mtlLoader = new MTLLoader(manager);
+                        const materials = mtlLoader.parse(mtlText);
+                        materials.preload();
+                        
+                        const objLoader = new OBJLoader(manager);
+                        objLoader.setMaterials(materials);
+                        const objText = new TextDecoder().decode(buffer);
+                        object = objLoader.parse(objText);
+                    } else {
+                        // OBJ without MTL (Blue Mesh fallback handled by three.js default or we add one)
+                        const objText = new TextDecoder().decode(buffer);
+                        object = new OBJLoader(manager).parse(objText);
+                    }
+                } 
+                else if (ext === 'fbx') {
+                    object = new FBXLoader(manager).parse(buffer, '');
+                }
+                else if (ext === 'dae') { // COLLADA / DAZ / POSER
+                    const text = new TextDecoder().decode(buffer);
+                    const res = new ColladaLoader(manager).parse(text, '');
+                    object = res.scene;
+                }
+                else if (ext === 'glb' || ext === 'gltf') {
+                    await new Promise(resolve => {
+                        new GLTFLoader(manager).parse(buffer, '', (gltf) => {
+                            object = gltf.scene;
+                            resolve();
+                        });
+                    });
+                }
+                else if (ext === 'stl') {
+                    const geom = new STLLoader(manager).parse(buffer);
+                    object = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({color:0xcccccc}));
+                }
+                else if (ext === 'usdz') {
+                    object = new USDZLoader(manager).parse(buffer);
+                }
+
+                if (!object) throw new Error("Parsing failed");
+
+                finalizeScene(object);
+
+            } catch (err) {
+                console.error(err);
+                alert("Error: " + err.message);
+                hideStatus();
+            }
+        }
+
+        function finalizeScene(object) {
+            currentModel = object;
+
+            // 1. Center and Scale the Object (Not just geometry)
+            const box = new THREE.Box3().setFromObject(currentModel);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            
+            // Move object to center (negate center position)
+            currentModel.position.x = -center.x;
+            currentModel.position.y = -center.y; // Align bottom? No, center for converter is safer
+            currentModel.position.z = -center.z;
+
+            // Create a Parent Group to hold the centered model
+            // This is crucial because we rotate/scale the group, not the internal mesh data, to preserve material mapping
+            const group = new THREE.Group();
+            group.add(currentModel);
+            currentModel = group;
+
+            // Calculate Scale to fit view (approx 3 units)
+            let scaleFactor = 3 / maxDim;
+            currentModel.scale.set(scaleFactor, scaleFactor, scaleFactor);
+
+            scene.add(currentModel);
+            
+            document.getElementById('btn-convert').disabled = false;
+            hideStatus();
+        }
+
+        // --- 4. EXPORT LOGIC ---
         window.convert = async function() {
-            if (!currentMesh) return;
+            if (!currentModel) return;
             const format = document.getElementById('export-format').value;
             const useARScale = document.getElementById('ar-scale').checked;
             
-            showStatus("Converting to " + format.toUpperCase() + "...");
+            showStatus("Converting...", "Generating " + format.toUpperCase());
 
-            // Create a clean mesh for export using the original (unscaled) geometry
-            const exportGeo = currentMesh.userData.originalGeometry.clone();
-            const exportMesh = new THREE.Mesh(exportGeo, new THREE.MeshStandardMaterial());
+            // Prepare for export: Clone so we don't mess up viewer
+            // Note: We export the inner model, not the scaled group, 
+            // BUT we apply the specific AR scaling if requested.
+            const exportObject = currentModel.clone();
             
-            // APPLY SCALING LOGIC
+            // Reset visual scaling
+            exportObject.scale.set(1, 1, 1); 
+
+            // Apply AR Scaling (mm to m conversion usually)
             if (useARScale && (format === 'usdz' || format === 'glb')) {
-                exportMesh.scale.set(0.001, 0.001, 0.001);
-            } else {
-                exportMesh.scale.set(1, 1, 1);
+                // Most Daz/OBJ files are in cm or mm. AR wants Meters.
+                // 0.01 is usually safe for OBJ->WebAR
+                exportObject.scale.set(0.01, 0.01, 0.01); 
             }
-            exportMesh.updateMatrixWorld();
+            exportObject.updateMatrixWorld(true);
 
             try {
                 let data;
                 let mimeType = 'application/octet-stream';
+                let extension = format;
 
-                if (format === 'stl') {
-                    data = new STLExporter().parse(exportMesh, { binary: true });
-                } 
-                else if (format === 'obj') {
-                    data = new OBJExporter().parse(exportMesh);
-                    mimeType = 'text/plain';
-                } 
-                else if (format === 'glb') {
+                if (format === 'glb') {
+                    // GLB handles embedded textures best
+                    const exporter = new GLTFExporter();
                     data = await new Promise(resolve => {
-                        new GLTFExporter().parse(exportMesh, resolve, { binary: true });
+                        exporter.parse(exportObject, resolve, { binary: true, embedImages: true });
                     });
                 } 
                 else if (format === 'usdz') {
-                    const exporter = new USDZExporter();
-                    data = await exporter.parse(exportMesh);
+                    // USDZ Exporter (basic texture support)
+                    data = await new USDZExporter().parse(exportObject);
+                }
+                else if (format === 'obj') {
+                    // OBJ Exporter
+                    data = new OBJExporter().parse(exportObject);
+                    mimeType = 'text/plain';
+                }
+                else if (format === 'stl') {
+                    // STL (Binary)
+                    data = new STLExporter().parse(exportObject, { binary: true });
                 }
 
                 // DOWNLOAD
@@ -320,49 +377,50 @@
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
                 link.href = url;
-                link.download = `${originalFileName}_converted.${format}`;
+                link.download = `${originalFileName}_converted.${extension}`;
                 document.body.appendChild(link);
                 link.click();
                 
-                setTimeout(() => {
-                    document.body.removeChild(link);
-                    URL.revokeObjectURL(url);
-                    hideStatus();
+                setTimeout(() => { 
+                    document.body.removeChild(link); 
+                    URL.revokeObjectURL(url); 
+                    hideStatus(); 
                 }, 100);
 
             } catch (err) {
-                alert("Conversion Failed: " + err.message);
+                console.error(err);
+                alert("Conversion failed. See console for details.");
                 hideStatus();
             }
         };
 
         // --- UI HELPERS ---
-        function showStatus(msg) {
-            document.getElementById('status-text').innerText = msg;
+        function showStatus(title, sub) {
+            document.getElementById('status-text').innerText = title;
+            document.getElementById('status-sub').innerText = sub || "";
             document.getElementById('status-overlay').style.display = 'flex';
         }
         function hideStatus() {
             document.getElementById('status-overlay').style.display = 'none';
         }
 
-        // Initialize App
+        // Init
         init();
 
-        // Bind File Input Events
+        // Event Listeners
         const input = document.getElementById('file-input');
         const dropZone = document.getElementById('drop-zone');
 
         input.addEventListener('change', (e) => {
-            if(e.target.files.length) window.handleFile(e.target.files[0]);
+            if(e.target.files.length) window.handleFiles(e.target.files);
         });
 
-        // Drag & Drop
         dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
         dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
         dropZone.addEventListener('drop', (e) => {
             e.preventDefault();
             dropZone.classList.remove('dragover');
-            if(e.dataTransfer.files.length) window.handleFile(e.dataTransfer.files[0]);
+            if(e.dataTransfer.files.length) window.handleFiles(e.dataTransfer.files);
         });
 
     </script>
