@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Universal 3D Converter</title>
+    <title>Universal 3D Converter (+FBX)</title>
     
     <!-- Bootstrap for UI -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -12,7 +12,7 @@
     <!-- Polyfills for Mobile/iOS Support -->
     <script async src="https://ga.jspm.io/npm:es-module-shims@1.8.0/dist/es-module-shims.js"></script>
 
-    <!-- Import Map (Using esm.sh for reliability) -->
+    <!-- Import Map -->
     <script type="importmap">
     {
         "imports": {
@@ -67,9 +67,10 @@
             <label class="form-label text-muted small fw-bold">1. IMPORT FILE</label>
             <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
                 <i class="bi bi-cloud-upload fs-1 text-secondary"></i>
-                <div class="mt-2 small text-muted">Click or Drop File<br>(STL, OBJ, GLB, USDZ)</div>
+                <div class="mt-2 small text-muted">Click or Drop File<br>(STL, OBJ, FBX, GLB, USDZ)</div>
             </div>
-            <input type="file" id="file-input" class="d-none" accept=".stl,.obj,.glb,.gltf,.usdz">
+            <!-- Added .fbx to accept attribute -->
+            <input type="file" id="file-input" class="d-none" accept=".stl,.obj,.fbx,.glb,.gltf,.usdz">
             <div id="file-info" class="alert alert-dark border-secondary p-2 small d-none">
                 <i class="bi bi-file-earmark-check"></i> <span id="file-name">Loaded</span>
             </div>
@@ -122,6 +123,7 @@
         import { STLLoader } from "three/addons/loaders/STLLoader.js";
         import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
         import { USDZLoader } from "three/addons/loaders/USDZLoader.js";
+        import { FBXLoader } from "three/addons/loaders/FBXLoader.js"; // Added FBX Loader
         
         // Exporters
         import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
@@ -140,7 +142,7 @@
             
             // Scene
             scene = new THREE.Scene();
-            scene.background = null; // Transparent for gradient CSS
+            scene.background = null; 
             
             // Camera
             camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.01, 1000);
@@ -208,10 +210,8 @@
                     if (ext === 'stl') {
                         geometry = new STLLoader().parse(buffer);
                     } else if (ext === 'obj') {
-                        // OBJLoader expects Text
                         const text = new TextDecoder().decode(buffer);
                         const group = new OBJLoader().parse(text);
-                        // Extract first geometry
                         group.traverse(c => { if(c.isMesh && !geometry) geometry = c.geometry; });
                     } else if (ext === 'glb' || ext === 'gltf') {
                         await new Promise(resolve => {
@@ -222,6 +222,11 @@
                         });
                     } else if (ext === 'usdz') {
                         const group = new USDZLoader().parse(buffer);
+                        group.traverse(c => { if(c.isMesh && !geometry) geometry = c.geometry; });
+                    } else if (ext === 'fbx') {
+                        // NEW FBX HANDLING
+                        const group = new FBXLoader().parse(buffer, '');
+                        // Find the first valid mesh
                         group.traverse(c => { if(c.isMesh && !geometry) geometry = c.geometry; });
                     }
 
@@ -264,7 +269,8 @@
                 }
             };
 
-            if (ext === 'obj') reader.readAsArrayBuffer(file); // We decode text manually above
+            // Read as Text for OBJ, ArrayBuffer for everything else (including FBX)
+            if (ext === 'obj') reader.readAsArrayBuffer(file); 
             else reader.readAsArrayBuffer(file);
         };
 
@@ -280,9 +286,7 @@
             const exportGeo = currentMesh.userData.originalGeometry.clone();
             const exportMesh = new THREE.Mesh(exportGeo, new THREE.MeshStandardMaterial());
             
-            // APPLY LOGIC:
-            // If AR Scale is checked (mm -> m), scale by 0.001
-            // If Unchecked, keep 1:1 (Raw Units)
+            // APPLY SCALING LOGIC
             if (useARScale && (format === 'usdz' || format === 'glb')) {
                 exportMesh.scale.set(0.001, 0.001, 0.001);
             } else {
