@@ -284,7 +284,7 @@
             loadModel(mainFile, mtlFile);
         };
 
-        async function loadModel(mainFile, mtlFile) {
+       async function loadModel(mainFile, mtlFile) {
             showStatus("Loading...", "Parsing 3D data");
 
             const manager = new THREE.LoadingManager();
@@ -326,10 +326,17 @@
                     try {
                         // 1. Point to the local 'external' folder
                         const advancedLoader = new AdvancedUSDZLoader('./external');
+                        
+                        // 2. Create a clean Three.js Group to hold the model
+                        const modelGroup = new THREE.Group();
         
-                        // 2. Load the file (Binary needs raw file object)
-                        const loadedGroup = await advancedLoader.loadFile(mainFile, new THREE.Group());
-                        object = loadedGroup;
+                        // 3. Load the file INTO that group
+                        // Note: We await the result, but we ignore the return value (which is just a controller)
+                        // We rely on 'modelGroup' being populated with meshes.
+                        await advancedLoader.loadFile(mainFile, modelGroup);
+                        
+                        // 4. Set our 'object' variable to the now-populated group
+                        object = modelGroup;
         
                     } catch (err) {
                         console.error("Advanced Loader failed:", err);
@@ -337,12 +344,19 @@
                             console.log("Attempting fallback to standard loader...");
                             object = new StandardUSDZLoader(manager).parse(buffer);
                         } catch (fallbackErr) {
-                            throw new Error("Could not load USDZ. \n1. Check 'coi-serviceworker.js'.\n2. Check 'external' folder.\n3. Make sure file isn't corrupted.");
+                            throw new Error("Could not load USDZ.\n\nMake sure 'coi-serviceworker.js' is running and the 'external' folder exists.");
                         }
                     }
                 }
 
                 if (!object) throw new Error("Parsing failed or unsupported file version.");
+
+                // Check if the loaded object actually has content
+                // (Sometimes the advanced loader creates an empty group if it fails silently)
+                if (object.children.length === 0 && ext === 'usdz') {
+                    // Small delay to allow async wasm to populate if it lagged
+                    await new Promise(r => setTimeout(r, 100)); 
+                }
 
                 convertToStandardMaterial(object);
                 finalizeScene(object);
