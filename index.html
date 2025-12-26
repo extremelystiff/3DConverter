@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
+<head>    
+    <script src="coi-serviceworker.js"></script>
     <meta charset="UTF-8">
     <!-- Prevent zooming to keep UI tight -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
@@ -16,7 +17,9 @@
         "imports": {
             "three": "https://esm.sh/three@0.160.0",
             "three/addons/": "https://esm.sh/three@0.160.0/examples/jsm/", 
-            "fflate": "https://esm.sh/fflate@0.8.2"
+            "fflate": "https://esm.sh/fflate@0.8.2",
+            // We load the main logic from CDN
+            "three-usdz-loader": "https://cdn.jsdelivr.net/npm/three-usdz-loader@1.0.9/lib/USDZLoader.js"
         }
     }
     </script>
@@ -228,7 +231,7 @@
         import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
         import { STLLoader } from "three/addons/loaders/STLLoader.js";
         import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-        import { USDZLoader } from "three/addons/loaders/USDZLoader.js";
+        import { USDZLoader as AdvancedUSDZLoader } from "three-usdz-loader";
         import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
         import { ColladaLoader } from "three/addons/loaders/ColladaLoader.js"; 
         import { TGALoader } from "three/addons/loaders/TGALoader.js"; 
@@ -408,18 +411,32 @@
                     const geometry = new STLLoader(manager).parse(buffer);
                     object = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({color: 0xcccccc}));
                 }
-                // --- USDZ LOADING (With Error Catching) ---
+                // --- USDZ LOADING (BINARY & ASCII) ---
                 else if (ext === 'usdz') {
                     try {
-                        // USDZLoader throws an error immediately if it detects Binary (Crate) data
-                        object = new USDZLoader(manager).parse(buffer);
-                    } catch (usdzError) {
-                        console.error("USDZ Internal Error:", usdzError);
-                        // Check for the specific Three.js error message regarding Crate files
-                        if (usdzError.message && (usdzError.message.includes("Crate") || usdzError.message.includes("usda"))) {
-                            throw new Error("This USDZ is Binary (Apple/Crate). Web browsers currently only support ASCII USDZ. Please try uploading a .GLB file instead.");
-                        } else {
-                            throw usdzError;
+                        // 1. Point to the local folder containing the 4 downloaded files
+                        // We use specific settings to ensure materials load correctly
+                        const advancedLoader = new AdvancedUSDZLoader('./external');
+        
+                        // 2. Load the file
+                        // This loader needs the raw File object, NOT the buffer
+                        const loadedGroup = await advancedLoader.loadFile(mainFile, new THREE.Group());
+                        
+                        // 3. Clean up the scene structure
+                        object = loadedGroup;
+                        
+                        // Clean up memory if needed (optional)
+                        // advancedLoader.clean(); 
+        
+                    } catch (err) {
+                        console.error("Advanced Loader failed:", err);
+                        
+                        // Fallback attempt with standard loader if it's actually ASCII
+                        try {
+                            console.log("Attempting fallback to standard loader...");
+                            object = new USDZLoader(manager).parse(buffer);
+                        } catch (fallbackErr) {
+                            throw new Error("Could not load USDZ. \n1. Ensure 'coi-serviceworker.js' is next to index.html.\n2. Ensure the 'external' folder exists with the 4 files.");
                         }
                     }
                 }
