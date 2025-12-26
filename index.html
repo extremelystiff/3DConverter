@@ -392,8 +392,17 @@
         window.convert = async function() {
             if (!currentModel) return;
             const format = document.getElementById('export-format').value;
+            
             showStatus("Converting...", "Generating " + format.toUpperCase());
-            const exportGroup = currentModel.clone();
+
+            // 1. Clone the model so we don't mess up the viewer while editing
+            const exportGroup = currentModel.clone(true);
+            
+            // 2. IMPORTANT: We must manually clone materials and "bake" textures
+            // because standard cloning shares materials, and we need to modify them
+            // for the export without breaking the view.
+            await prepareForExport(exportGroup);
+
             exportGroup.scale.set(1, 1, 1);
             exportGroup.updateMatrixWorld(true);
 
@@ -404,9 +413,15 @@
 
                 if (format === 'glb') {
                     const exporter = new GLTFExporter();
-                    data = await new Promise(resolve => exporter.parse(exportGroup, resolve, { binary: true, embedImages: true }));
+                    data = await new Promise(resolve => {
+                        exporter.parse(exportGroup, resolve, { binary: true, embedImages: true });
+                    });
                 } 
-                else if (format === 'usdz') data = await new USDZExporter().parse(exportGroup);
+                else if (format === 'usdz') {
+                    // USDZ Exporter needs the textures to be Canvas elements 
+                    // or valid URLs to work best. Our prepareForExport handled this.
+                    data = await new USDZExporter().parse(exportGroup);
+                } 
                 else if (format === 'obj') { data = new OBJExporter().parse(exportGroup); mimeType = 'text/plain'; }
                 else if (format === 'stl') { data = new STLExporter().parse(exportGroup, { binary: true }); }
 
@@ -417,6 +432,7 @@
                 link.download = `${originalFileName}_edited.${extension}`;
                 document.body.appendChild(link);
                 link.click();
+                
                 setTimeout(() => { document.body.removeChild(link); URL.revokeObjectURL(url); hideStatus(); }, 100);
 
             } catch (err) {
@@ -425,7 +441,64 @@
                 hideStatus();
             }
         };
+        // --- HELPER TO BAKE TEXTURES ---
+        async function prepareForExport(group) {
+            const processes = [];
 
+            group.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    // Handle arrays of materials
+                    const materials = Array.isArray(child.material) ? child.material : [child.material];
+                    
+                    // Clone the materials so we can modify them safely
+                    if (Array.isArray(child.material)) {
+                        child.material = materials.map(m => m.clone());
+                    } else {
+                        child.material = child.material.clone();
+                    }
+
+                    const matList = Array.isArray(child.material) ? child.material : [child.material];
+
+                    matList.forEach(mat => {
+                        // Check if material has a map (Texture)
+                        if (mat.map && mat.map.image) {
+                            processes.push(new Promise(resolve => {
+                                const img = mat.map.image;
+                                
+                                // Check if we need to convert Blob to Canvas
+                                // (If it's already a canvas, we are good)
+                                if (img instanceof HTMLImageElement || (img instanceof ImageBitmap)) {
+                                    
+                                    // Create a canvas to draw the image data
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = img.width;
+                                    canvas.height = img.height;
+                                    const ctx = canvas.getContext('2d');
+                                    
+                                    // Draw the image
+                                    ctx.drawImage(img, 0, 0);
+                                    
+                                    // Replace the material image with the canvas
+                                    // The Exporter knows how to read pixels from a canvas!
+                                    mat.map.image = canvas;
+                                    mat.map.needsUpdate = true;
+                                    
+                                    // Give it a generic name so USDZ exporter doesn't crash
+                                    if (!mat.map.name) mat.map.name = "texture_" + Math.floor(Math.random() * 1000);
+                                    
+                                    resolve();
+                                } else {
+                                    resolve();
+                                }
+                            }));
+                        }
+                    });
+                }
+            });
+
+            // Wait for all textures to be processed
+            await Promise.all(processes);
+        }
         function convertToStandardMaterial(object) {
             object.traverse((child) => {
                 if (child.isMesh && child.material && child.material.type !== 'MeshStandardMaterial') {
