@@ -160,9 +160,11 @@
         <small class="text-muted" id="status-sub">Please wait</small>
     </div>
 
-    <script type="module">
+<script type="module">
         import * as THREE from "three";
         import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+        
+        // Loaders
         import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
         import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
         import { STLLoader } from "three/addons/loaders/STLLoader.js";
@@ -171,12 +173,13 @@
         import { ColladaLoader } from "three/addons/loaders/ColladaLoader.js"; 
         import { TGALoader } from "three/addons/loaders/TGALoader.js"; 
         
-        // STANDARD THREE.JS USDZ LOADER (For fallback/ASCII)
+        // STANDARD USDZ LOADER (Fallback)
         import { USDZLoader as StandardUSDZLoader } from "three/addons/loaders/USDZLoader.js";
         
-        // ADVANCED BINARY LOADER (via esm.sh)
+        // ADVANCED BINARY LOADER
         import { USDZLoader as AdvancedUSDZLoader } from "three-usdz-loader";
 
+        // Exporters
         import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
         import { STLExporter } from "three/addons/exporters/STLExporter.js";
         import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
@@ -284,7 +287,7 @@
             loadModel(mainFile, mtlFile);
         };
 
-       async function loadModel(mainFile, mtlFile) {
+        async function loadModel(mainFile, mtlFile) {
             showStatus("Loading...", "Parsing 3D data");
 
             const manager = new THREE.LoadingManager();
@@ -321,40 +324,25 @@
                 }
                 else if (ext === 'stl') object = new THREE.Mesh(new STLLoader(manager).parse(buffer), new THREE.MeshStandardMaterial({color: 0xcccccc}));
                 
-                // --- USDZ LOADING (BINARY & ASCII) ---
                 else if (ext === 'usdz') {
                     try {
-                        // 1. Point to the local 'external' folder
                         const advancedLoader = new AdvancedUSDZLoader('./external');
-                        
-                        // 2. Create a clean Three.js Group to hold the model
                         const modelGroup = new THREE.Group();
-        
-                        // 3. Load the file INTO that group
-                        // Note: We await the result, but we ignore the return value (which is just a controller)
-                        // We rely on 'modelGroup' being populated with meshes.
                         await advancedLoader.loadFile(mainFile, modelGroup);
-                        
-                        // 4. Set our 'object' variable to the now-populated group
                         object = modelGroup;
-        
                     } catch (err) {
                         console.error("Advanced Loader failed:", err);
                         try {
-                            console.log("Attempting fallback to standard loader...");
                             object = new StandardUSDZLoader(manager).parse(buffer);
                         } catch (fallbackErr) {
-                            throw new Error("Could not load USDZ.\n\nMake sure 'coi-serviceworker.js' is running and the 'external' folder exists.");
+                            throw new Error("Could not load USDZ. Ensure 'coi-serviceworker.js' is active.");
                         }
                     }
                 }
 
-                if (!object) throw new Error("Parsing failed or unsupported file version.");
+                if (!object) throw new Error("Parsing failed");
 
-                // Check if the loaded object actually has content
-                // (Sometimes the advanced loader creates an empty group if it fails silently)
                 if (object.children.length === 0 && ext === 'usdz') {
-                    // Small delay to allow async wasm to populate if it lagged
                     await new Promise(r => setTimeout(r, 100)); 
                 }
 
@@ -389,19 +377,18 @@
             hideStatus();
         }
 
+        // --- EXPORT FUNCTION ---
         window.convert = async function() {
             if (!currentModel) return;
             const format = document.getElementById('export-format').value;
             
             showStatus("Converting...", "Generating " + format.toUpperCase());
 
-            // 1. Clone the model so we don't mess up the viewer while editing
+            // 1. Clone explicitly
             const exportGroup = currentModel.clone(true);
             
-            // 2. IMPORTANT: We must manually clone materials and "bake" textures
-            // because standard cloning shares materials, and we need to modify them
-            // for the export without breaking the view.
-            await prepareForExport(exportGroup);
+            // 2. Prepare materials (Bake textures, Fix DoubleSide for USDZ)
+            await prepareForExport(exportGroup, format);
 
             exportGroup.scale.set(1, 1, 1);
             exportGroup.updateMatrixWorld(true);
@@ -413,14 +400,19 @@
 
                 if (format === 'glb') {
                     const exporter = new GLTFExporter();
-                    data = await new Promise(resolve => {
-                        exporter.parse(exportGroup, resolve, { binary: true, embedImages: true });
+                    data = await new Promise((resolve, reject) => {
+                        // FIXED: Arguments order: input, success, error, options
+                        exporter.parse(
+                            exportGroup, 
+                            resolve, 
+                            (err) => reject(err), 
+                            { binary: true, embedImages: true } 
+                        );
                     });
                 } 
                 else if (format === 'usdz') {
-                    // USDZ Exporter needs the textures to be Canvas elements 
-                    // or valid URLs to work best. Our prepareForExport handled this.
-                    data = await new USDZExporter().parse(exportGroup);
+                    const exporter = new USDZExporter();
+                    data = await exporter.parse(exportGroup);
                 } 
                 else if (format === 'obj') { data = new OBJExporter().parse(exportGroup); mimeType = 'text/plain'; }
                 else if (format === 'stl') { data = new STLExporter().parse(exportGroup, { binary: true }); }
@@ -441,16 +433,16 @@
                 hideStatus();
             }
         };
-        // --- HELPER TO BAKE TEXTURES ---
-        async function prepareForExport(group) {
+
+        // --- PREPARE FOR EXPORT (FIXES TEXTURES & DOUBLE SIDED) ---
+        async function prepareForExport(group, format) {
             const processes = [];
 
             group.traverse((child) => {
                 if (child.isMesh && child.material) {
-                    // Handle arrays of materials
                     const materials = Array.isArray(child.material) ? child.material : [child.material];
                     
-                    // Clone the materials so we can modify them safely
+                    // Clone materials to avoid changing the viewer
                     if (Array.isArray(child.material)) {
                         child.material = materials.map(m => m.clone());
                     } else {
@@ -460,55 +452,64 @@
                     const matList = Array.isArray(child.material) ? child.material : [child.material];
 
                     matList.forEach(mat => {
-                        // Check if material has a map (Texture)
+                        
+                        // FIX: USDZ CRASHES ON DOUBLESIDE
+                        if (format === 'usdz') {
+                            mat.side = THREE.FrontSide;
+                        }
+
+                        // FIX: BAKE TEXTURES TO CANVAS
                         if (mat.map && mat.map.image) {
                             processes.push(new Promise(resolve => {
                                 const img = mat.map.image;
                                 
-                                // Check if we need to convert Blob to Canvas
-                                // (If it's already a canvas, we are good)
-                                if (img instanceof HTMLImageElement || (img instanceof ImageBitmap)) {
-                                    
-                                    // Create a canvas to draw the image data
-                                    const canvas = document.createElement('canvas');
-                                    canvas.width = img.width;
-                                    canvas.height = img.height;
-                                    const ctx = canvas.getContext('2d');
-                                    
-                                    // Draw the image
-                                    ctx.drawImage(img, 0, 0);
-                                    
-                                    // Replace the material image with the canvas
-                                    // The Exporter knows how to read pixels from a canvas!
-                                    mat.map.image = canvas;
-                                    mat.map.needsUpdate = true;
-                                    
-                                    // Give it a generic name so USDZ exporter doesn't crash
-                                    if (!mat.map.name) mat.map.name = "texture_" + Math.floor(Math.random() * 1000);
-                                    
-                                    resolve();
-                                } else {
-                                    resolve();
+                                // Only process if we have dimensions (it's loaded)
+                                if (img.width > 0 && img.height > 0) {
+                                    try {
+                                        const canvas = document.createElement('canvas');
+                                        canvas.width = img.width;
+                                        canvas.height = img.height;
+                                        const ctx = canvas.getContext('2d');
+                                        
+                                        // Draw image (handles ImageBitmap and HTMLImageElement)
+                                        ctx.drawImage(img, 0, 0);
+                                        
+                                        // Replace with canvas
+                                        mat.map.image = canvas;
+                                        mat.map.needsUpdate = true;
+                                        mat.map.name = mat.map.name || ("texture_" + Math.random().toString(36).substr(2, 9));
+                                    } catch (e) {
+                                        console.warn("Could not bake texture (CORS or Format issue):", e);
+                                    }
                                 }
+                                resolve();
                             }));
                         }
                     });
                 }
             });
 
-            // Wait for all textures to be processed
             await Promise.all(processes);
         }
+
         function convertToStandardMaterial(object) {
             object.traverse((child) => {
-                if (child.isMesh && child.material && child.material.type !== 'MeshStandardMaterial') {
-                    const old = Array.isArray(child.material) ? child.material[0] : child.material;
-                    const mat = new THREE.MeshStandardMaterial();
-                    if(old.map) mat.map = old.map;
-                    if(old.color) mat.color.copy(old.color);
-                    mat.roughness = 0.5; mat.metalness = 0.1; mat.side = THREE.DoubleSide;
-                    mat.transparent = old.transparent; mat.opacity = old.opacity;
-                    child.material = mat;
+                if (child.isMesh && child.material) {
+                    // Check if already standard to avoid double-processing
+                    if (child.material.type !== 'MeshStandardMaterial') {
+                        const old = Array.isArray(child.material) ? child.material[0] : child.material;
+                        const mat = new THREE.MeshStandardMaterial();
+                        if(old.map) mat.map = old.map;
+                        if(old.color) mat.color.copy(old.color);
+                        mat.roughness = 0.5; mat.metalness = 0.1;
+                        
+                        // Default to DoubleSide for Viewer, but Export will switch it to FrontSide for USDZ
+                        mat.side = THREE.DoubleSide; 
+                        
+                        mat.transparent = old.transparent; 
+                        mat.opacity = old.opacity;
+                        child.material = mat;
+                    }
                 }
             });
         }
@@ -526,7 +527,7 @@
         const input = document.getElementById('file-input');
         input.addEventListener('change', (e) => { if(e.target.files.length) window.handleFiles(e.target.files); });
         dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.style.background='#333'; });
-        dropZone.addEventListener('dragleave', () => dropZone.style.background='#222');
+        dropZone.addEventListener('dragleave', () => dropZone.style.background='#222'; });
         dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.style.background='#222'; if(e.dataTransfer.files.length) window.handleFiles(e.dataTransfer.files); });
     </script>
 </body>
