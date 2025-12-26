@@ -355,8 +355,9 @@
         };
 
         // --- 4. LOADING ---
+// --- 4. LOADING ---
         async function loadModel(mainFile, mtlFile) {
-            showStatus("Loading...", "Mapping textures");
+            showStatus("Loading...", "Parsing 3D data");
 
             const manager = new THREE.LoadingManager();
             manager.setURLModifier((url) => {
@@ -372,6 +373,8 @@
 
             try {
                 let object;
+                
+                // --- OBJ LOADING ---
                 if (ext === 'obj') {
                     if (mtlFile) {
                         const mtlText = await mtlFile.text();
@@ -382,23 +385,56 @@
                         object = new OBJLoader(manager).parse(new TextDecoder().decode(buffer));
                     }
                 } 
-                else if (ext === 'fbx') object = new FBXLoader(manager).parse(buffer, '');
-                else if (ext === 'dae') object = new ColladaLoader(manager).parse(new TextDecoder().decode(buffer), '').scene;
-                else if (ext === 'glb' || ext === 'gltf') {
-                    await new Promise(r => new GLTFLoader(manager).parse(buffer, '', (g) => { object = g.scene; r(); }));
+                // --- FBX LOADING ---
+                else if (ext === 'fbx') {
+                    object = new FBXLoader(manager).parse(buffer, '');
                 }
-                else if (ext === 'stl') object = new THREE.Mesh(new STLLoader(manager).parse(buffer), new THREE.MeshStandardMaterial({color:0xcccccc}));
-                else if (ext === 'usdz') object = new USDZLoader(manager).parse(buffer);
+                // --- COLLADA (DAE) LOADING ---
+                else if (ext === 'dae') {
+                    const xml = new TextDecoder().decode(buffer);
+                    object = new ColladaLoader(manager).parse(xml, '').scene;
+                }
+                // --- GLB/GLTF LOADING ---
+                else if (ext === 'glb' || ext === 'gltf') {
+                    await new Promise((resolve, reject) => {
+                        new GLTFLoader(manager).parse(buffer, '', 
+                            (g) => { object = g.scene; resolve(); },
+                            (e) => { reject(e); }
+                        );
+                    });
+                }
+                // --- STL LOADING ---
+                else if (ext === 'stl') {
+                    const geometry = new STLLoader(manager).parse(buffer);
+                    object = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({color: 0xcccccc}));
+                }
+                // --- USDZ LOADING (With Error Catching) ---
+                else if (ext === 'usdz') {
+                    try {
+                        // USDZLoader throws an error immediately if it detects Binary (Crate) data
+                        object = new USDZLoader(manager).parse(buffer);
+                    } catch (usdzError) {
+                        console.error("USDZ Internal Error:", usdzError);
+                        // Check for the specific Three.js error message regarding Crate files
+                        if (usdzError.message && (usdzError.message.includes("Crate") || usdzError.message.includes("usda"))) {
+                            throw new Error("This USDZ is Binary (Apple/Crate). Web browsers currently only support ASCII USDZ. Please try uploading a .GLB file instead.");
+                        } else {
+                            throw usdzError;
+                        }
+                    }
+                }
 
-                if (!object) throw new Error("Parsing failed");
+                if (!object) throw new Error("Parsing failed or unsupported file version.");
 
                 convertToStandardMaterial(object);
                 finalizeScene(object);
 
             } catch (err) {
                 console.error(err);
-                alert("Error: " + err.message);
+                // Hide spinner
                 hideStatus();
+                // Show user friendly alert
+                alert("Error loading file:\n" + err.message);
             }
         }
 
