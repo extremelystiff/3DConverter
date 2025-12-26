@@ -384,10 +384,9 @@
             
             showStatus("Converting...", "Generating " + format.toUpperCase());
 
-            // 1. Clone explicitly
             const exportGroup = currentModel.clone(true);
             
-            // 2. Prepare materials (Bake textures, Fix DoubleSide for USDZ)
+            // Apply fixes (Texture baking & USDZ adjustments)
             await prepareForExport(exportGroup, format);
 
             exportGroup.scale.set(1, 1, 1);
@@ -401,17 +400,12 @@
                 if (format === 'glb') {
                     const exporter = new GLTFExporter();
                     data = await new Promise((resolve, reject) => {
-                        // FIXED: Arguments order: input, success, error, options
-                        exporter.parse(
-                            exportGroup, 
-                            resolve, 
-                            (err) => reject(err), 
-                            { binary: true, embedImages: true } 
-                        );
+                        exporter.parse(exportGroup, resolve, (err) => reject(err), { binary: true, embedImages: true });
                     });
                 } 
                 else if (format === 'usdz') {
                     const exporter = new USDZExporter();
+                    // USDZExporter creates a UInt8Array
                     data = await exporter.parse(exportGroup);
                 } 
                 else if (format === 'obj') { data = new OBJExporter().parse(exportGroup); mimeType = 'text/plain'; }
@@ -434,7 +428,7 @@
             }
         };
 
-        // --- PREPARE FOR EXPORT (FIXES TEXTURES & DOUBLE SIDED) ---
+        // --- PREPARE FOR EXPORT (IMPROVED TEXTURE BAKING) ---
         async function prepareForExport(group, format) {
             const processes = [];
 
@@ -442,7 +436,7 @@
                 if (child.isMesh && child.material) {
                     const materials = Array.isArray(child.material) ? child.material : [child.material];
                     
-                    // Clone materials to avoid changing the viewer
+                    // Clone materials to prevent modifying the viewer
                     if (Array.isArray(child.material)) {
                         child.material = materials.map(m => m.clone());
                     } else {
@@ -452,18 +446,17 @@
                     const matList = Array.isArray(child.material) ? child.material : [child.material];
 
                     matList.forEach(mat => {
-                        
-                        // FIX: USDZ CRASHES ON DOUBLESIDE
+                        // 1. Fix Side for USDZ
                         if (format === 'usdz') {
-                            mat.side = THREE.FrontSide;
+                            mat.side = THREE.FrontSide; 
                         }
 
-                        // FIX: BAKE TEXTURES TO CANVAS
+                        // 2. Fix Texture Maps
                         if (mat.map && mat.map.image) {
                             processes.push(new Promise(resolve => {
                                 const img = mat.map.image;
                                 
-                                // Only process if we have dimensions (it's loaded)
+                                // Only process if image has data
                                 if (img.width > 0 && img.height > 0) {
                                     try {
                                         const canvas = document.createElement('canvas');
@@ -471,15 +464,27 @@
                                         canvas.height = img.height;
                                         const ctx = canvas.getContext('2d');
                                         
-                                        // Draw image (handles ImageBitmap and HTMLImageElement)
+                                        if (format === 'usdz') {
+                                            // USDZ FLIP HACK:
+                                            // Manually flip the image vertically on the canvas
+                                            // Then tell the texture NOT to flip (since we just did it)
+                                            // This prevents the Exporter from failing the flip operation on Bitmaps
+                                            ctx.translate(0, img.height);
+                                            ctx.scale(1, -1);
+                                            mat.map.flipY = false;
+                                        }
+
                                         ctx.drawImage(img, 0, 0);
                                         
-                                        // Replace with canvas
+                                        // Replace with canvas data
                                         mat.map.image = canvas;
                                         mat.map.needsUpdate = true;
-                                        mat.map.name = mat.map.name || ("texture_" + Math.random().toString(36).substr(2, 9));
+                                        
+                                        // Ensure it has a name for the file
+                                        if (!mat.map.name) mat.map.name = "texture_" + Math.random().toString(36).substr(2, 5);
+
                                     } catch (e) {
-                                        console.warn("Could not bake texture (CORS or Format issue):", e);
+                                        console.warn("Texture baking failed:", e);
                                     }
                                 }
                                 resolve();
@@ -495,7 +500,6 @@
         function convertToStandardMaterial(object) {
             object.traverse((child) => {
                 if (child.isMesh && child.material) {
-                    // Check if already standard to avoid double-processing
                     if (child.material.type !== 'MeshStandardMaterial') {
                         const old = Array.isArray(child.material) ? child.material[0] : child.material;
                         const mat = new THREE.MeshStandardMaterial();
@@ -503,11 +507,15 @@
                         if(old.color) mat.color.copy(old.color);
                         mat.roughness = 0.5; mat.metalness = 0.1;
                         
-                        // Default to DoubleSide for Viewer, but Export will switch it to FrontSide for USDZ
+                        // Default to DoubleSide for Viewer
                         mat.side = THREE.DoubleSide; 
                         
                         mat.transparent = old.transparent; 
                         mat.opacity = old.opacity;
+                        
+                        // Fix undefined envMap warning
+                        mat.envMap = null; 
+
                         child.material = mat;
                     }
                 }
@@ -527,7 +535,6 @@
         const input = document.getElementById('file-input');
         input.addEventListener('change', (e) => { if(e.target.files.length) window.handleFiles(e.target.files); });
         dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.style.background='#333'; });
-        // FIXED SYNTAX ERROR BELOW: Added missing { after =>
         dropZone.addEventListener('dragleave', () => { dropZone.style.background='#222'; });
         dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.style.background='#222'; if(e.dataTransfer.files.length) window.handleFiles(e.dataTransfer.files); });
     </script>
