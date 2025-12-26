@@ -527,7 +527,8 @@
         const input = document.getElementById('file-input');
         input.addEventListener('change', (e) => { if(e.target.files.length) window.handleFiles(e.target.files); });
         dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.style.background='#333'; });
-        dropZone.addEventListener('dragleave', () => dropZone.style.background='#222'; });
+        // FIXED SYNTAX ERROR BELOW: Added missing { after =>
+        dropZone.addEventListener('dragleave', () => { dropZone.style.background='#222'; });
         dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.style.background='#222'; if(e.dataTransfer.files.length) window.handleFiles(e.dataTransfer.files); });
     </script>
 </body>
