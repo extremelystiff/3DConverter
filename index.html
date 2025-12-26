@@ -13,14 +13,14 @@
 
     <script async src="https://ga.jspm.io/npm:es-module-shims@1.8.0/dist/es-module-shims.js"></script>
 
-    <!-- FIXED IMPORT MAP (No Comments allowed inside JSON) -->
+    <!-- FIXED IMPORT MAP: Switched to esm.sh which converts the library to browser format automatically -->
     <script type="importmap">
     {
         "imports": {
             "three": "https://esm.sh/three@0.160.0",
             "three/addons/": "https://esm.sh/three@0.160.0/examples/jsm/", 
             "fflate": "https://esm.sh/fflate@0.8.2",
-            "three-usdz-loader": "https://cdn.jsdelivr.net/npm/three-usdz-loader@1.0.9/lib/USDZLoader.js"
+            "three-usdz-loader": "https://esm.sh/three-usdz-loader@1.0.9?external=three"
         }
     }
     </script>
@@ -173,7 +173,8 @@
         
         // STANDARD THREE.JS USDZ LOADER (For fallback/ASCII)
         import { USDZLoader as StandardUSDZLoader } from "three/addons/loaders/USDZLoader.js";
-        // ADVANCED BINARY LOADER (From external library)
+        
+        // ADVANCED BINARY LOADER (via esm.sh)
         import { USDZLoader as AdvancedUSDZLoader } from "three-usdz-loader";
 
         import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
@@ -336,7 +337,7 @@
                             console.log("Attempting fallback to standard loader...");
                             object = new StandardUSDZLoader(manager).parse(buffer);
                         } catch (fallbackErr) {
-                            throw new Error("Could not load USDZ. Ensure 'coi-serviceworker.js' is active and 'external' folder exists.");
+                            throw new Error("Could not load USDZ. \n1. Check 'coi-serviceworker.js'.\n2. Check 'external' folder.\n3. Make sure file isn't corrupted.");
                         }
                     }
                 }
