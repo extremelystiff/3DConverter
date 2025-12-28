@@ -405,9 +405,15 @@
                 } 
                 else if (format === 'usdz') {
                     const exporter = new USDZExporter();
-                    // USDZExporter creates a UInt8Array
-                    data = await exporter.parse(exportGroup);
-                } 
+                    data = await new Promise((resolve, reject) => {
+                        try {
+                            // The parse method returns a Promise with the data
+                            exporter.parse(exportGroup).then(resolve).catch(reject);
+                        } catch (err) {
+                            reject(err);
+                        }
+                    });
+                }
                 else if (format === 'obj') { data = new OBJExporter().parse(exportGroup); mimeType = 'text/plain'; }
                 else if (format === 'stl') { data = new STLExporter().parse(exportGroup, { binary: true }); }
 
