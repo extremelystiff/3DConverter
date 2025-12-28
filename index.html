@@ -1,12 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>    
-    <!-- 1. HEADER HACK FOR GITHUB PAGES / WASM THREADING -->
     <script src="coi-serviceworker.js"></script>
-    
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>3D Pro Converter (Adaptive + Black Fix)</title>
+    <title>3D Pro Converter (Texture Rescue)</title>
     
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
@@ -25,77 +23,23 @@
     </script>
 
     <style>
-        /* DARK THEME BASE */
         :root { --app-height: 100svh; }
-
-        body { 
-            background-color: #000; 
-            color: #e0e0e0; 
-            font-family: 'Segoe UI', system-ui, sans-serif; 
-            height: 100vh; 
-            height: 100svh; 
-            overflow: hidden; 
-            display: flex;
-            flex-direction: row; 
-            margin: 0;
-        }
-
-        /* SIDEBAR */
-        .sidebar { 
-            width: 380px; 
-            background: #1a1a1a; 
-            border-right: 1px solid #333; 
-            display: flex; 
-            flex-direction: column; 
-            padding: 20px; 
-            z-index: 20; 
-            overflow-y: auto;
-            box-shadow: 4px 0 15px rgba(0,0,0,0.5);
-        }
-
-        /* VIEWER */
-        .viewer { 
-            flex: 1; 
-            position: relative; 
-            background: radial-gradient(circle at center, #2a2a2a 0%, #000 100%); 
-        }
-
-        /* UI ELEMENTS */
+        body { background-color: #000; color: #e0e0e0; font-family: 'Segoe UI', system-ui, sans-serif; height: 100vh; height: 100svh; overflow: hidden; display: flex; flex-direction: row; margin: 0; }
+        .sidebar { width: 380px; background: #1a1a1a; border-right: 1px solid #333; display: flex; flex-direction: column; padding: 20px; z-index: 20; overflow-y: auto; box-shadow: 4px 0 15px rgba(0,0,0,0.5); }
+        .viewer { flex: 1; position: relative; background: radial-gradient(circle at center, #2a2a2a 0%, #000 100%); }
         .form-control, .form-select { background: #2c2c2c; border: 1px solid #444; color: white; font-size: 0.95rem; }
         .form-control:focus, .form-select:focus { background: #333; color: white; border-color: #0d6efd; box-shadow: none; }
-        
-        .drop-zone { 
-            border: 2px dashed #444; border-radius: 12px; padding: 20px; 
-            text-align: center; margin-bottom: 20px; transition: all 0.2s; 
-            cursor: pointer; background: #222;
-        }
+        .drop-zone { border: 2px dashed #444; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 20px; transition: all 0.2s; cursor: pointer; background: #222; }
         .drop-zone:hover, .drop-zone:active { border-color: #0d6efd; background: #2a2a2a; }
-
-        /* SLIDERS */
         .range-wrap { margin-bottom: 8px; display: flex; align-items: center; }
         .range-wrap label { width: 30px; font-weight: bold; font-size: 0.8rem; color: #888; }
         .range-wrap input { flex: 1; accent-color: #0d6efd; cursor: pointer; }
         .range-val { width: 35px; text-align: right; font-size: 0.75rem; color: #aaa; font-family: monospace; }
-
-        /* LOADING */
-        #status-overlay { 
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-            background: rgba(0,0,0,0.9); z-index: 1000; 
-            display: none; flex-direction: column; 
-            justify-content: center; align-items: center; text-align: center; 
-        }
-
-        /* MOBILE */
+        #status-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 1000; display: none; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
         @media (max-width: 900px) {
             body { flex-direction: column; }
             .viewer { height: 40%; width: 100%; order: 1; }
-            .sidebar {
-                width: 100%; height: 60%; order: 2;
-                border-right: none; border-top: 2px solid #333;
-                padding: 15px;
-                padding-bottom: calc(15px + env(safe-area-inset-bottom)); 
-            }
-            .drop-zone { padding: 10px; margin-bottom: 15px; }
+            .sidebar { width: 100%; height: 60%; order: 2; border-right: none; border-top: 2px solid #333; padding: 15px; padding-bottom: calc(15px + env(safe-area-inset-bottom)); }
         }
     </style>
 </head>
@@ -164,7 +108,6 @@
         import * as THREE from "three";
         import { OrbitControls } from "three/addons/controls/OrbitControls.js";
         
-        // Loaders
         import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
         import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
         import { STLLoader } from "three/addons/loaders/STLLoader.js";
@@ -177,7 +120,9 @@
         import { USDZLoader as StandardUSDZLoader } from "three/addons/loaders/USDZLoader.js";
         import { USDZLoader as AdvancedUSDZLoader } from "three-usdz-loader";
 
-        // Exporters
+        // --- UNZIP UTILITY FOR USDZ ---
+        import { unzipSync } from "fflate";
+
         import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
         import { STLExporter } from "three/addons/exporters/STLExporter.js";
         import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
@@ -187,6 +132,7 @@
         let currentModel = null;
         let originalFileName = "model";
         let blobMap = {}; 
+        let internalTextures = {}; // Store textures found INSIDE the USDZ zip
         let textureCount = 0;
 
         function init() {
@@ -204,13 +150,13 @@
             controls = new OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
 
-            const ambient = new THREE.AmbientLight(0xffffff, 2.0); // Bright ambient
+            const ambient = new THREE.AmbientLight(0xffffff, 2.0);
             scene.add(ambient);
             const mainLight = new THREE.DirectionalLight(0xffffff, 2.0);
             mainLight.position.set(5, 10, 7);
             scene.add(mainLight);
             const fillLight = new THREE.DirectionalLight(0xffffff, 1.0);
-            fillLight.position.set(-5, 0, -5);
+            fillLight.position.set(-5, 2, -5);
             scene.add(fillLight);
 
             const grid = new THREE.GridHelper(10, 20, 0x444444, 0x222222);
@@ -252,6 +198,7 @@
             showStatus("Analyzing...", "Reading files");
             if(currentModel) { scene.remove(currentModel); currentModel = null; }
             blobMap = {};
+            internalTextures = {};
             textureCount = 0;
             let mainFile = null;
             let mtlFile = null;
@@ -328,24 +275,61 @@
                         console.log("Attempting Standard USDZ Loader...");
                         object = new StandardUSDZLoader(manager).parse(buffer);
 
-                        // MANUAL CHECK: Standard loader checks
                         if (object.children.length === 0) {
-                            throw new Error("Standard loader returned empty group (Binary/Crate detected).");
+                            throw new Error("Standard loader returned empty group.");
                         }
                         console.log("Standard Loader success.");
+
                     } catch (standardError) {
                         console.warn("Standard Loader failed:", standardError.message);
+                        showStatus("Unpacking...", "Extracting Textures from USDZ");
+
+                        // --- 1. MANUAL UNZIP STRATEGY (Rescue Textures) ---
+                        // USDZ is just a ZIP. We unzip it to find the images inside.
+                        try {
+                            const unzipped = unzipSync(new Uint8Array(buffer));
+                            console.log("USDZ Unzipped. Files found:", Object.keys(unzipped));
+                            
+                            // Iterate through files in the zip
+                            for (const [path, fileData] of Object.entries(unzipped)) {
+                                const lowerPath = path.toLowerCase();
+                                if (lowerPath.endsWith('.png') || lowerPath.endsWith('.jpg') || lowerPath.endsWith('.jpeg')) {
+                                    
+                                    // Create Blob for this internal texture
+                                    const blob = new Blob([fileData], { type: lowerPath.endsWith('.png') ? 'image/png' : 'image/jpeg' });
+                                    const blobUrl = URL.createObjectURL(blob);
+                                    
+                                    // Get pure filename (e.g., "tex.png" from "material/tex.png")
+                                    const fileName = path.split('/').pop();
+                                    
+                                    // Add to global maps so loaders can find it
+                                    blobMap[path] = blobUrl;          // Full internal path
+                                    blobMap[fileName] = blobUrl;      // Filename only
+                                    blobMap[fileName.toLowerCase()] = blobUrl;
+                                    
+                                    // Store for manual rescue later
+                                    internalTextures[fileName] = blobUrl;
+                                    internalTextures[fileName.toLowerCase()] = blobUrl;
+                                    
+                                    console.log(`Extracted: ${fileName}`);
+                                }
+                            }
+                        } catch (zipErr) {
+                            console.warn("Could not unzip USDZ manually:", zipErr);
+                        }
+
+                        // --- 2. ADVANCED LOADER WITH INJECTION ---
                         showStatus("Retrying...", "Using Advanced Binary Loader");
-                        
-                        // Fallback to Advanced Loader
                         try {
                             const advancedLoader = new AdvancedUSDZLoader('./external');
                             
-                            // Texture Injector for Advanced Loader
+                            // Aggressive Texture Fetch Override
                             const originalFetch = window.fetch;
                             window.fetch = function(url, ... args) {
+                                // Try to match pure filename
                                 const fileName = url.split('/').pop().split('\\').pop();
                                 if (blobMap[fileName] || blobMap[fileName.toLowerCase()]) {
+                                    console.log("Advanced Loader requested", url, "-> Serving Blob");
                                     return originalFetch(blobMap[fileName] || blobMap[fileName.toLowerCase()], ...args);
                                 }
                                 return originalFetch(url, ...args);
@@ -358,7 +342,7 @@
                             
                             console.log("Advanced Loader success.");
                         } catch (advancedError) {
-                            throw new Error("Both loaders failed. File may be corrupted or incompatible.");
+                            throw new Error("Both loaders failed.");
                         }
                     }
                 }
@@ -370,7 +354,7 @@
                     await new Promise(r => setTimeout(r, 100)); 
                 }
 
-                // NUCLEAR FIX FOR BLACK TEXTURES
+                // Clean and potentially Rescue Textures
                 cleanMaterial(object);
                 finalizeScene(object);
 
@@ -381,50 +365,67 @@
             }
         }
 
-        // --- THE "BLACK TEXTURE" FIXER ---
+        // --- MATERIAL CLEANER & RESCUE ---
         function cleanMaterial(object) {
+            // Check if we extracted just ONE texture from the zip.
+            // If so, it's highly likely it belongs to the model, so we force apply it.
+            const textureKeys = Object.keys(internalTextures);
+            const singleRescueTexture = textureKeys.length === 1 ? internalTextures[textureKeys[0]] : null;
+            
+            if (singleRescueTexture) console.log("Single texture found. Enabling Aggressive Rescue Mode.");
+
+            const textureLoader = new THREE.TextureLoader();
+
             object.traverse((child) => {
                 if (child.isMesh) {
                     
-                    // 1. DELETE GEOMETRY COLORS
-                    // This is the #1 cause of black USDZ models in web viewers.
-                    // If the geometry has a vertex color attribute (often black), 
-                    // it overrides the texture. We delete it to force texture usage.
+                    // Delete vertex colors (Primary cause of black models)
                     if (child.geometry.attributes.color) {
                         child.geometry.deleteAttribute('color');
                     }
 
-                    // 2. REBUILD MATERIAL
                     if (child.material) {
                         const oldMat = Array.isArray(child.material) ? child.material[0] : child.material;
-                        
-                        // Create fresh material to strip weird PBR settings
                         const newMat = new THREE.MeshStandardMaterial();
                         
-                        // Transfer Map
+                        let hasMap = false;
+
+                        // 1. Transfer existing map if loader succeeded
                         if (oldMat.map) {
                             newMat.map = oldMat.map;
                             newMat.map.colorSpace = THREE.SRGBColorSpace;
-                            // FORCE WHITE COLOR so texture shows
-                            newMat.color.setHex(0xffffff); 
-                            console.log("Texture found on mesh:", child.name || "Unnamed");
+                            hasMap = true;
+                        } 
+                        // 2. RESCUE: If no map, check if we found one in ZIP
+                        else if (textureKeys.length > 0) {
+                            // Method A: Check if Texture Name matches Material Name (e.g. Mat "Wood" -> "Wood.png")
+                            // Method B: If only 1 texture exists, force it.
+                            
+                            if (singleRescueTexture) {
+                                console.log("Applying rescued texture to mesh:", child.name);
+                                const tex = textureLoader.load(singleRescueTexture);
+                                tex.colorSpace = THREE.SRGBColorSpace;
+                                tex.flipY = false; // USDZ usually doesn't need flip, but varies
+                                newMat.map = tex;
+                                hasMap = true;
+                            }
+                        }
+
+                        // Colors
+                        if (hasMap) {
+                            newMat.color.setHex(0xffffff); // Force white so texture shows
                         } else {
                             if (oldMat.color) newMat.color.copy(oldMat.color);
-                            // If color is pure black and no texture, make it grey so we see geometry
+                            // If black and no texture, make grey
                             if (newMat.color.getHex() === 0x000000) newMat.color.setHex(0xaaaaaa);
                         }
 
-                        // Remove "Black Mirror" effect
+                        // PBR Strip
                         newMat.metalness = 0.0;
-                        newMat.roughness = 1.0;
-                        
-                        // Handle Opacity
+                        newMat.roughness = 0.8;
+                        newMat.side = THREE.DoubleSide;
                         newMat.transparent = oldMat.transparent;
                         newMat.opacity = oldMat.opacity;
-                        newMat.side = THREE.DoubleSide;
-
-                        // Transfer other maps if they exist
-                        if(oldMat.normalMap) newMat.normalMap = oldMat.normalMap;
 
                         child.material = newMat;
                     }
