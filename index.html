@@ -141,7 +141,7 @@ code Code
     function init() {
         const container = document.getElementById("viewer-container");
         scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x222222); // Lighter background to see black meshes
+        scene.background = new THREE.Color(0x222222);
 
         camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.01, 1000);
         camera.position.set(2, 2, 4);
@@ -155,8 +155,7 @@ code Code
         controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
 
-        // Add excessive lighting just in case
-        const ambient = new THREE.AmbientLight(0xffffff, 3.0);
+        const ambient = new THREE.AmbientLight(0xffffff, 2.0);
         scene.add(ambient);
         const dirLight = new THREE.DirectionalLight(0xffffff, 3.0);
         dirLight.position.set(5, 10, 7);
@@ -273,7 +272,7 @@ code Code
             else if (ext === 'stl') object = new THREE.Mesh(new STLLoader(manager).parse(buffer), new THREE.MeshStandardMaterial({color: 0xcccccc}));
             
             else if (ext === 'usdz') {
-                // 1. Unzip to find textures
+                // 1. Unzip to find textures (We need these only if the loader fails to map them)
                 try {
                     const unzipped = unzipSync(new Uint8Array(buffer));
                     for (const [path, fileData] of Object.entries(unzipped)) {
@@ -289,7 +288,6 @@ code Code
                             
                             internalTextures[fileName] = blobUrl;
                             internalTextures[fileName.toLowerCase()] = blobUrl;
-                            console.log(`Extracted Texture: ${fileName}`);
                         }
                     }
                 } catch (zipErr) {
@@ -301,6 +299,7 @@ code Code
                     console.log("Attempting Standard USDZ Loader...");
                     object = new StandardUSDZLoader(manager).parse(buffer);
                     if (object.children.length === 0) throw new Error("Standard loader returned empty group.");
+                    console.log("Standard Loader Success.");
                 } catch (standardError) {
                     console.warn("Standard Loader failed.");
                     showStatus("Retrying...", "Using Advanced Binary Loader");
@@ -340,52 +339,62 @@ code Code
         }
     }
 
-    // --- MATERIAL CLEANER (MESH BASIC FIX) ---
+    // --- SMART MATERIAL CLEANER ---
     function cleanMaterial(object) {
         const textureKeys = Object.keys(internalTextures);
         const singleRescueTexture = textureKeys.length > 0 ? internalTextures[textureKeys[0]] : null;
         const textureLoader = new THREE.TextureLoader();
 
-        if(singleRescueTexture) console.log("Applying Rescued Texture via MeshBasicMaterial");
-
         object.traverse((child) => {
             if (child.isMesh) {
                 const geo = child.geometry;
                 
-                // 1. Ensure UVs are named correctly
+                // 1. FIX UVs (Renaming 'st' to 'uv' is safe, but don't overwrite existing UVs)
                 if (!geo.attributes.uv) {
                     if (geo.attributes.st) geo.setAttribute('uv', geo.attributes.st);
                     else if (geo.attributes.texCoord) geo.setAttribute('uv', geo.attributes.texCoord);
                 }
 
-                // 2. Clear colors (black vertex colors hide textures)
-                if (geo.attributes.color) geo.deleteAttribute('color');
+                // 2. Clean Geometry
+                if (geo.attributes.color) geo.deleteAttribute('color'); // Remove vertex colors (often black)
+                geo.computeVertexNormals();
 
-                // 3. FORCE VISIBILITY: Use MeshBasicMaterial
-                // This ignores lighting, normals, and environment maps. 
-                // If the texture exists, this WILL show it.
-                if (singleRescueTexture) {
+                // 3. MATERIAL LOGIC
+                // CASE A: The loader worked (GLB, OBJ, or Standard USDZ)
+                if (child.material && child.material.map) {
+                    // DO NOT TOUCH THE TEXTURE.
+                    // Just ensure the mesh renders double-sided and isn't too dark.
+                    child.material.side = THREE.DoubleSide;
+                    child.material.metalness = 0.0; // Prevent super dark metallic look
+                    child.material.roughness = 1.0;
+                    child.material.needsUpdate = true;
+                } 
+                // CASE B: The loader failed to map texture (Advanced USDZ)
+                else if (singleRescueTexture) {
+                    console.log("Rescue: Applying extracted texture to", child.name);
+                    
                     const tex = textureLoader.load(singleRescueTexture);
                     tex.colorSpace = THREE.SRGBColorSpace;
-                    tex.flipY = false; // USDZ standard
-                    
-                    // IMPORTANT: Disable mipmaps to prevent NPOT blackness
-                    tex.generateMipmaps = false;
+                    tex.flipY = false; // USDZ textures are usually flipped top-down
+                    tex.generateMipmaps = false; 
                     tex.minFilter = THREE.LinearFilter;
 
+                    // Use MeshBasicMaterial to completely BYPASS lighting/PBR issues
                     child.material = new THREE.MeshBasicMaterial({
                         map: tex,
-                        color: 0xffffff,
                         side: THREE.DoubleSide
                     });
-                } else {
-                    // Fallback for no texture found
-                    child.material = new THREE.MeshBasicMaterial({
-                        color: 0x00ff00, // Green means "Mesh found but no texture"
-                        wireframe: true
+                    child.material.needsUpdate = true;
+                }
+                // CASE C: No Texture found anywhere
+                else {
+                    child.material = new THREE.MeshStandardMaterial({
+                        color: 0xaaaaaa,
+                        side: THREE.DoubleSide,
+                        metalness: 0.1,
+                        roughness: 0.8
                     });
                 }
-                child.material.needsUpdate = true;
             }
         });
     }
@@ -411,7 +420,6 @@ code Code
         hideStatus();
     }
 
-    // Export Logic
     window.convert = async function() {
         if (!currentModel) return;
         const format = document.getElementById('export-format').value;
@@ -460,11 +468,12 @@ code Code
         const processes = [];
         group.traverse((child) => {
             if (child.isMesh && child.material) {
-                // If we forced BasicMaterial, we can convert back to Standard for export if needed, 
-                // but usually exporting Basic works fine for geometry/texture transfer.
                 const matList = Array.isArray(child.material) ? child.material : [child.material];
                 matList.forEach(mat => {
                     if (format === 'usdz') { mat.side = THREE.FrontSide; }
+                    
+                    // Ensure we export a valid material, converting Basic back to Standard if needed isn't strictly necessary 
+                    // as exporters handle Basic, but we ensure colors are clean.
                     if (mat.map && mat.map.image) {
                         processes.push(new Promise(resolve => {
                             const img = mat.map.image;
