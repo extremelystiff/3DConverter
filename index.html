@@ -4,7 +4,7 @@
     <script src="coi-serviceworker.js"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>3D Pro (Final Fix)</title>
+    <title>3D Pro (UV Fix)</title>
     
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
@@ -351,7 +351,7 @@
             }
         }
 
-        // --- MATERIAL CLEANER & RESCUE (DARK GREY FIX) ---
+        // --- MATERIAL CLEANER & RESCUE (UV FIX) ---
         function cleanMaterial(object) {
             const textureKeys = Object.keys(internalTextures);
             const singleRescueTexture = textureKeys.length === 1 ? internalTextures[textureKeys[0]] : null;
@@ -363,12 +363,25 @@
             object.traverse((child) => {
                 if (child.isMesh) {
                     
+                    // --- FIX 0: MAP USD 'st' TO THREE.JS 'uv' ---
+                    // This is likely the root cause of the black model.
+                    // The advanced loader imports 'st' (USD standard) but doesn't rename it to 'uv'.
+                    if (!child.geometry.attributes.uv) {
+                        if (child.geometry.attributes.st) {
+                            console.log("Renaming 'st' attribute to 'uv' for mesh:", child.name);
+                            child.geometry.setAttribute('uv', child.geometry.attributes.st);
+                        } else if (child.geometry.attributes.texCoord) {
+                             console.log("Renaming 'texCoord' attribute to 'uv' for mesh:", child.name);
+                             child.geometry.setAttribute('uv', child.geometry.attributes.texCoord);
+                        } else {
+                            console.warn("No texture coordinates found for:", child.name);
+                        }
+                    }
+
                     // --- FIX 1: RECALCULATE NORMALS ---
-                    // This fixes the "Dark Grey" look caused by bad lighting data in binary files
                     child.geometry.computeVertexNormals();
 
                     // --- FIX 2: REMOVE VERTEX COLORS ---
-                    // These override textures with black if present
                     if (child.geometry.attributes.color) {
                         child.geometry.deleteAttribute('color');
                     }
@@ -403,15 +416,15 @@
                         // Colors
                         newMat.color.setHex(0xffffff); // Force Base Color White
                         
-                        // --- FIX 4: ADD EMISSIVE GLOW ---
-                        // If lighting is STILL broken, this makes the texture visible (self-illuminated)
-                        // Dark Grey glow ensures it's visible but still has some shading
+                        // --- FIX 4: EMISSIVE OVERRIDE ---
+                        // Force the texture to be visible even if lights fail
                         if (hasMap) {
-                            newMat.emissive.setHex(0x222222); 
-                            newMat.emissiveMap = newMat.map; 
+                            newMat.emissiveMap = newMat.map;
+                            newMat.emissive.setHex(0xffffff); // Full brightness
+                            newMat.emissiveIntensity = 1.0;
                         }
 
-                        // PBR Strip (Make it non-metallic matte)
+                        // PBR Strip
                         newMat.metalness = 0.0;
                         newMat.roughness = 1.0;
                         newMat.side = THREE.DoubleSide;
