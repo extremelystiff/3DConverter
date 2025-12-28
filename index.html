@@ -326,12 +326,37 @@
                 
                 else if (ext === 'usdz') {
                     try {
+                        // Try advanced loader first with custom resource loading
                         const advancedLoader = new AdvancedUSDZLoader('./external');
+                        
+                        // IMPORTANT: Configure the advanced loader to use our texture blobMap
+                        // The advanced loader has its own resource resolution system
+                        // We need to intercept it or pre-populate textures
+                        
                         const modelGroup = new THREE.Group();
-                        await advancedLoader.loadFile(mainFile, modelGroup);
-                        object = modelGroup;
+                        
+                        // Inject texture URLs into the advanced loader's context
+                        // by temporarily modifying URL resolution
+                        const originalFetch = window.fetch;
+                        window.fetch = function(url, ... args) {
+                            const fileName = url.split('/').pop().split('\\').pop();
+                            if (blobMap[fileName] || blobMap[fileName.toLowerCase()]) {
+                                const blobUrl = blobMap[fileName] || blobMap[fileName. toLowerCase()];
+                                return originalFetch(blobUrl, ...args);
+                            }
+                            return originalFetch(url, ...args);
+                        };
+                        
+                        try {
+                            await advancedLoader.loadFile(mainFile, modelGroup);
+                            object = modelGroup;
+                        } finally {
+                            // Restore original fetch
+                            window. fetch = originalFetch;
+                        }
                     } catch (err) {
                         console.error("Advanced Loader failed:", err);
+                        // Fallback to standard loader which DOES use the manager
                         try {
                             object = new StandardUSDZLoader(manager).parse(buffer);
                         } catch (fallbackErr) {
