@@ -1,10 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>    
-    <script src="coi-serviceworker.js"></script>
+    <!-- FIX: Ensure Service Worker is present for headers if needed, though often not strictly required for local blobs -->
+    <script src="https://unpkg.com/coi-serviceworker/coi-serviceworker.js"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>3D Pro (UV Fix)</title>
+    <title>3D Pro (USDZ Fix)</title>
     
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
@@ -271,47 +272,38 @@
                 
                 // --- ADAPTIVE USDZ LOGIC ---
                 else if (ext === 'usdz') {
+                    // 1. ALWAYS UNZIP FIRST to find hidden textures
+                    try {
+                        const unzipped = unzipSync(new Uint8Array(buffer));
+                        for (const [path, fileData] of Object.entries(unzipped)) {
+                            const lowerPath = path.toLowerCase();
+                            if (lowerPath.endsWith('.png') || lowerPath.endsWith('.jpg') || lowerPath.endsWith('.jpeg')) {
+                                const blob = new Blob([fileData], { type: lowerPath.endsWith('.png') ? 'image/png' : 'image/jpeg' });
+                                const blobUrl = URL.createObjectURL(blob);
+                                const fileName = path.split('/').pop();
+                                
+                                blobMap[path] = blobUrl;
+                                blobMap[fileName] = blobUrl;
+                                blobMap[fileName.toLowerCase()] = blobUrl;
+                                
+                                internalTextures[fileName] = blobUrl;
+                                internalTextures[fileName.toLowerCase()] = blobUrl;
+                                console.log(`Extracted Texture: ${fileName}`);
+                            }
+                        }
+                    } catch (zipErr) {
+                        console.warn("Could not unzip USDZ manually:", zipErr);
+                    }
+
                     try {
                         console.log("Attempting Standard USDZ Loader...");
                         object = new StandardUSDZLoader(manager).parse(buffer);
-
-                        if (object.children.length === 0) {
-                            throw new Error("Standard loader returned empty group.");
-                        }
-                        console.log("Standard Loader success.");
-
+                        if (object.children.length === 0) throw new Error("Standard loader returned empty group.");
                     } catch (standardError) {
                         console.warn("Standard Loader failed:", standardError.message);
-                        showStatus("Unpacking...", "Extracting Textures from USDZ");
-
-                        // --- 1. MANUAL UNZIP STRATEGY ---
-                        try {
-                            const unzipped = unzipSync(new Uint8Array(buffer));
-                            for (const [path, fileData] of Object.entries(unzipped)) {
-                                const lowerPath = path.toLowerCase();
-                                if (lowerPath.endsWith('.png') || lowerPath.endsWith('.jpg') || lowerPath.endsWith('.jpeg')) {
-                                    const blob = new Blob([fileData], { type: lowerPath.endsWith('.png') ? 'image/png' : 'image/jpeg' });
-                                    const blobUrl = URL.createObjectURL(blob);
-                                    const fileName = path.split('/').pop();
-                                    
-                                    blobMap[path] = blobUrl;
-                                    blobMap[fileName] = blobUrl;
-                                    blobMap[fileName.toLowerCase()] = blobUrl;
-                                    
-                                    internalTextures[fileName] = blobUrl;
-                                    internalTextures[fileName.toLowerCase()] = blobUrl;
-                                    console.log(`Extracted: ${fileName}`);
-                                }
-                            }
-                        } catch (zipErr) {
-                            console.warn("Could not unzip USDZ manually:", zipErr);
-                        }
-
-                        // --- 2. ADVANCED LOADER ---
                         showStatus("Retrying...", "Using Advanced Binary Loader");
                         try {
                             const advancedLoader = new AdvancedUSDZLoader('./external');
-                            
                             const originalFetch = window.fetch;
                             window.fetch = function(url, ... args) {
                                 const fileName = url.split('/').pop().split('\\').pop();
@@ -325,8 +317,6 @@
                             await advancedLoader.loadFile(mainFile, modelGroup);
                             object = modelGroup;
                             window.fetch = originalFetch; 
-                            
-                            console.log("Advanced Loader success.");
                         } catch (advancedError) {
                             throw new Error("Both loaders failed.");
                         }
@@ -354,9 +344,10 @@
         // --- MATERIAL CLEANER & RESCUE (UV FIX) ---
         function cleanMaterial(object) {
             const textureKeys = Object.keys(internalTextures);
-            const singleRescueTexture = textureKeys.length === 1 ? internalTextures[textureKeys[0]] : null;
+            // Grab the first texture found in the USDZ if available
+            const singleRescueTexture = textureKeys.length > 0 ? internalTextures[textureKeys[0]] : null;
             
-            if (singleRescueTexture) console.log("Single texture found. Enabling Aggressive Rescue Mode.");
+            if (singleRescueTexture) console.log("Textures detected inside file. Enabling Aggressive Mapping.");
 
             const textureLoader = new THREE.TextureLoader();
 
@@ -364,24 +355,22 @@
                 if (child.isMesh) {
                     
                     // --- FIX 0: MAP USD 'st' TO THREE.JS 'uv' ---
-                    // This is likely the root cause of the black model.
-                    // The advanced loader imports 'st' (USD standard) but doesn't rename it to 'uv'.
+                    // This is the #1 reason USDZ textures fail to show
                     if (!child.geometry.attributes.uv) {
                         if (child.geometry.attributes.st) {
-                            console.log("Renaming 'st' attribute to 'uv' for mesh:", child.name);
+                            console.log("Fixed: Renamed 'st' to 'uv' for mesh:", child.name);
                             child.geometry.setAttribute('uv', child.geometry.attributes.st);
                         } else if (child.geometry.attributes.texCoord) {
-                             console.log("Renaming 'texCoord' attribute to 'uv' for mesh:", child.name);
+                             console.log("Fixed: Renamed 'texCoord' to 'uv' for mesh:", child.name);
                              child.geometry.setAttribute('uv', child.geometry.attributes.texCoord);
-                        } else {
-                            console.warn("No texture coordinates found for:", child.name);
-                        }
+                        } 
                     }
 
                     // --- FIX 1: RECALCULATE NORMALS ---
                     child.geometry.computeVertexNormals();
 
                     // --- FIX 2: REMOVE VERTEX COLORS ---
+                    // Often USDZ has black vertex colors which overrides the texture
                     if (child.geometry.attributes.color) {
                         child.geometry.deleteAttribute('color');
                     }
@@ -390,41 +379,37 @@
                     if (child.material) {
                         const oldMat = Array.isArray(child.material) ? child.material[0] : child.material;
                         
-                        // New clean material
                         const newMat = new THREE.MeshStandardMaterial();
                         
                         let hasMap = false;
 
-                        // 1. Transfer existing map
+                        // 1. Check if loader found map
                         if (oldMat.map) {
                             newMat.map = oldMat.map;
                             hasMap = true;
                         } 
-                        // 2. RESCUE: Force Single Texture
+                        // 2. RESCUE: If loader failed, FORCE the unzipped texture
                         else if (singleRescueTexture) {
-                            console.log("Applying rescued texture to:", child.name || "Mesh");
+                            console.log("Applying rescued texture to:", child.name);
                             const tex = textureLoader.load(singleRescueTexture);
                             tex.colorSpace = THREE.SRGBColorSpace;
-                            tex.generateMipmaps = false;
-                            tex.minFilter = THREE.LinearFilter;
-                            tex.flipY = false; 
-
+                            tex.flipY = false; // USDZ Textures are usually flipped
+                            
                             newMat.map = tex;
                             hasMap = true;
                         }
 
-                        // Colors
-                        newMat.color.setHex(0xffffff); // Force Base Color White
+                        // Force Base Color White (so texture isn't tinted black)
+                        newMat.color.setHex(0xffffff); 
                         
                         // --- FIX 4: EMISSIVE OVERRIDE ---
-                        // Force the texture to be visible even if lights fail
+                        // Force the texture to be visible even if lights/normals are broken
                         if (hasMap) {
                             newMat.emissiveMap = newMat.map;
-                            newMat.emissive.setHex(0xffffff); // Full brightness
-                            newMat.emissiveIntensity = 1.0;
+                            newMat.emissive.setHex(0xffffff); 
+                            newMat.emissiveIntensity = 1.0; // Full brightness
                         }
 
-                        // PBR Strip
                         newMat.metalness = 0.0;
                         newMat.roughness = 1.0;
                         newMat.side = THREE.DoubleSide;
@@ -520,6 +505,9 @@
                     const matList = Array.isArray(child.material) ? child.material : [child.material];
 
                     matList.forEach(mat => {
+                        // Reset Emissive for export so it reacts to light normally
+                        mat.emissive.setHex(0x000000); 
+
                         if (format === 'usdz') { mat.side = THREE.FrontSide; }
 
                         if (mat.map && mat.map.image) {
