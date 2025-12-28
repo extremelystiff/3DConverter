@@ -173,7 +173,7 @@
         import { ColladaLoader } from "three/addons/loaders/ColladaLoader.js"; 
         import { TGALoader } from "three/addons/loaders/TGALoader.js"; 
         
-        // --- KEY CHANGE: IMPORT BOTH USDZ LOADERS (ALIASED) ---
+        // --- LOADERS ALIASED ---
         import { USDZLoader as StandardUSDZLoader } from "three/addons/loaders/USDZLoader.js";
         import { USDZLoader as AdvancedUSDZLoader } from "three-usdz-loader";
 
@@ -327,20 +327,39 @@
                     try {
                         console.log("Attempting Standard USDZ Loader (Better for Textures)...");
                         // 1. Try Standard Loader FIRST. 
-                        // This uses the official Three.js add-on which preserves textures well for exported files.
                         object = new StandardUSDZLoader(manager).parse(buffer);
+
+                        // --- CRITICAL FIX START ---
+                        // The Standard Loader logs "No usda file found" but DOES NOT throw an error.
+                        // It returns an empty Group. We must manually check for this.
+                        if (object.children.length === 0) {
+                            throw new Error("Standard loader returned empty group (Binary/Crate file detected).");
+                        }
+                        // --- CRITICAL FIX END ---
+
                         console.log("Standard Loader success.");
                     } catch (standardError) {
-                        console.warn("Standard Loader failed:", standardError);
+                        console.warn("Standard Loader failed/skipped:", standardError.message);
                         showStatus("Retrying...", "Using Advanced Binary Loader");
                         
                         // 2. Fallback to Advanced Loader
-                        // This handles complex binary hierarchies that the standard loader misses.
                         try {
                             const advancedLoader = new AdvancedUSDZLoader('./external');
+                            // Inject URL fetching for texture blobs into advanced loader context
+                            const originalFetch = window.fetch;
+                            window.fetch = function(url, ... args) {
+                                const fileName = url.split('/').pop().split('\\').pop();
+                                if (blobMap[fileName] || blobMap[fileName.toLowerCase()]) {
+                                    return originalFetch(blobMap[fileName] || blobMap[fileName.toLowerCase()], ...args);
+                                }
+                                return originalFetch(url, ...args);
+                            };
+                            
                             const modelGroup = new THREE.Group();
                             await advancedLoader.loadFile(mainFile, modelGroup);
                             object = modelGroup;
+                            window.fetch = originalFetch; // Restore fetch
+                            
                             console.log("Advanced Loader success.");
                         } catch (advancedError) {
                             throw new Error("Both loaders failed. File may be corrupted or incompatible.");
@@ -351,7 +370,9 @@
 
                 if (!object) throw new Error("Parsing failed");
 
+                // Double check for empty results even after advanced loader
                 if (object.children.length === 0 && ext === 'usdz') {
+                     // Sometimes advanced loader takes a moment to populate the group
                     await new Promise(r => setTimeout(r, 100)); 
                 }
 
@@ -371,6 +392,11 @@
             const size = box.getSize(new THREE.Vector3());
             const maxDim = Math.max(size.x, size.y, size.z);
             
+            // Check if model is empty/invisible
+            if (maxDim === -Infinity || maxDim === 0) {
+                console.warn("Model loaded but has 0 size");
+            }
+
             object.position.x = -center.x; object.position.y = -center.y; object.position.z = -center.z;
 
             const group = new THREE.Group();
@@ -498,9 +524,7 @@
         function convertToStandardMaterial(object) {
             object.traverse((child) => {
                 if (child.isMesh && child.material) {
-                    // Try to preserve existing texture map if it exists
                     const old = Array.isArray(child.material) ? child.material[0] : child.material;
-                    
                     if (child.material.type !== 'MeshStandardMaterial') {
                         const mat = new THREE.MeshStandardMaterial();
                         if(old.map) mat.map = old.map;
