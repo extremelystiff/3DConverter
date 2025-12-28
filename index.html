@@ -1,19 +1,18 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>    
-    <!-- 1. HEADER HACK FOR GITHUB PAGES -->
+    <!-- 1. HEADER HACK FOR GITHUB PAGES / WASM THREADING -->
     <script src="coi-serviceworker.js"></script>
     
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>3D Pro Converter (Binary USDZ)</title>
+    <title>3D Pro Converter (Adaptive USDZ)</title>
     
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
 
     <script async src="https://ga.jspm.io/npm:es-module-shims@1.8.0/dist/es-module-shims.js"></script>
 
-    <!-- FIXED IMPORT MAP: Switched to esm.sh which converts the library to browser format automatically -->
     <script type="importmap">
     {
         "imports": {
@@ -118,6 +117,7 @@
             <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
                 <i class="bi bi-cloud-arrow-up fs-2 text-secondary"></i>
                 <div class="mt-1 small"><strong class="text-white">Tap to Select Files</strong></div>
+                <div class="small text-muted" style="font-size: 0.7em">(USDZ, GLB, OBJ, FBX, STL)</div>
             </div>
             <input type="file" id="file-input" class="d-none" multiple accept=".stl,.obj,.mtl,.fbx,.glb,.gltf,.usdz,.dae,.png,.jpg,.jpeg,.tga">
             
@@ -173,10 +173,8 @@
         import { ColladaLoader } from "three/addons/loaders/ColladaLoader.js"; 
         import { TGALoader } from "three/addons/loaders/TGALoader.js"; 
         
-        // STANDARD USDZ LOADER (Fallback)
+        // --- KEY CHANGE: IMPORT BOTH USDZ LOADERS (ALIASED) ---
         import { USDZLoader as StandardUSDZLoader } from "three/addons/loaders/USDZLoader.js";
-        
-        // ADVANCED BINARY LOADER
         import { USDZLoader as AdvancedUSDZLoader } from "three-usdz-loader";
 
         // Exporters
@@ -324,46 +322,32 @@
                 }
                 else if (ext === 'stl') object = new THREE.Mesh(new STLLoader(manager).parse(buffer), new THREE.MeshStandardMaterial({color: 0xcccccc}));
                 
+                // --- ADAPTIVE USDZ LOGIC ---
                 else if (ext === 'usdz') {
                     try {
-                        // Try advanced loader first with custom resource loading
-                        const advancedLoader = new AdvancedUSDZLoader('./external');
+                        console.log("Attempting Standard USDZ Loader (Better for Textures)...");
+                        // 1. Try Standard Loader FIRST. 
+                        // This uses the official Three.js add-on which preserves textures well for exported files.
+                        object = new StandardUSDZLoader(manager).parse(buffer);
+                        console.log("Standard Loader success.");
+                    } catch (standardError) {
+                        console.warn("Standard Loader failed:", standardError);
+                        showStatus("Retrying...", "Using Advanced Binary Loader");
                         
-                        // IMPORTANT: Configure the advanced loader to use our texture blobMap
-                        // The advanced loader has its own resource resolution system
-                        // We need to intercept it or pre-populate textures
-                        
-                        const modelGroup = new THREE.Group();
-                        
-                        // Inject texture URLs into the advanced loader's context
-                        // by temporarily modifying URL resolution
-                        const originalFetch = window.fetch;
-                        window.fetch = function(url, ... args) {
-                            const fileName = url.split('/').pop().split('\\').pop();
-                            if (blobMap[fileName] || blobMap[fileName.toLowerCase()]) {
-                                const blobUrl = blobMap[fileName] || blobMap[fileName. toLowerCase()];
-                                return originalFetch(blobUrl, ...args);
-                            }
-                            return originalFetch(url, ...args);
-                        };
-                        
+                        // 2. Fallback to Advanced Loader
+                        // This handles complex binary hierarchies that the standard loader misses.
                         try {
+                            const advancedLoader = new AdvancedUSDZLoader('./external');
+                            const modelGroup = new THREE.Group();
                             await advancedLoader.loadFile(mainFile, modelGroup);
                             object = modelGroup;
-                        } finally {
-                            // Restore original fetch
-                            window. fetch = originalFetch;
-                        }
-                    } catch (err) {
-                        console.error("Advanced Loader failed:", err);
-                        // Fallback to standard loader which DOES use the manager
-                        try {
-                            object = new StandardUSDZLoader(manager).parse(buffer);
-                        } catch (fallbackErr) {
-                            throw new Error("Could not load USDZ. Ensure 'coi-serviceworker.js' is active.");
+                            console.log("Advanced Loader success.");
+                        } catch (advancedError) {
+                            throw new Error("Both loaders failed. File may be corrupted or incompatible.");
                         }
                     }
                 }
+                // ---------------------------
 
                 if (!object) throw new Error("Parsing failed");
 
@@ -432,11 +416,8 @@
                     const exporter = new USDZExporter();
                     data = await new Promise((resolve, reject) => {
                         try {
-                            // The parse method returns a Promise with the data
                             exporter.parse(exportGroup).then(resolve).catch(reject);
-                        } catch (err) {
-                            reject(err);
-                        }
+                        } catch (err) { reject(err); }
                     });
                 }
                 else if (format === 'obj') { data = new OBJExporter().parse(exportGroup); mimeType = 'text/plain'; }
@@ -459,7 +440,7 @@
             }
         };
 
-        // --- PREPARE FOR EXPORT (IMPROVED TEXTURE BAKING) ---
+        // --- PREPARE FOR EXPORT (TEXTURE BAKING) ---
         async function prepareForExport(group, format) {
             const processes = [];
 
@@ -467,7 +448,6 @@
                 if (child.isMesh && child.material) {
                     const materials = Array.isArray(child.material) ? child.material : [child.material];
                     
-                    // Clone materials to prevent modifying the viewer
                     if (Array.isArray(child.material)) {
                         child.material = materials.map(m => m.clone());
                     } else {
@@ -477,17 +457,13 @@
                     const matList = Array.isArray(child.material) ? child.material : [child.material];
 
                     matList.forEach(mat => {
-                        // 1. Fix Side for USDZ
                         if (format === 'usdz') {
                             mat.side = THREE.FrontSide; 
                         }
 
-                        // 2. Fix Texture Maps
                         if (mat.map && mat.map.image) {
                             processes.push(new Promise(resolve => {
                                 const img = mat.map.image;
-                                
-                                // Only process if image has data
                                 if (img.width > 0 && img.height > 0) {
                                     try {
                                         const canvas = document.createElement('canvas');
@@ -496,24 +472,15 @@
                                         const ctx = canvas.getContext('2d');
                                         
                                         if (format === 'usdz') {
-                                            // USDZ FLIP HACK:
-                                            // Manually flip the image vertically on the canvas
-                                            // Then tell the texture NOT to flip (since we just did it)
-                                            // This prevents the Exporter from failing the flip operation on Bitmaps
                                             ctx.translate(0, img.height);
                                             ctx.scale(1, -1);
                                             mat.map.flipY = false;
                                         }
 
                                         ctx.drawImage(img, 0, 0);
-                                        
-                                        // Replace with canvas data
                                         mat.map.image = canvas;
                                         mat.map.needsUpdate = true;
-                                        
-                                        // Ensure it has a name for the file
                                         if (!mat.map.name) mat.map.name = "texture_" + Math.random().toString(36).substr(2, 5);
-
                                     } catch (e) {
                                         console.warn("Texture baking failed:", e);
                                     }
@@ -531,22 +498,18 @@
         function convertToStandardMaterial(object) {
             object.traverse((child) => {
                 if (child.isMesh && child.material) {
+                    // Try to preserve existing texture map if it exists
+                    const old = Array.isArray(child.material) ? child.material[0] : child.material;
+                    
                     if (child.material.type !== 'MeshStandardMaterial') {
-                        const old = Array.isArray(child.material) ? child.material[0] : child.material;
                         const mat = new THREE.MeshStandardMaterial();
                         if(old.map) mat.map = old.map;
                         if(old.color) mat.color.copy(old.color);
                         mat.roughness = 0.5; mat.metalness = 0.1;
-                        
-                        // Default to DoubleSide for Viewer
                         mat.side = THREE.DoubleSide; 
-                        
                         mat.transparent = old.transparent; 
                         mat.opacity = old.opacity;
-                        
-                        // Fix undefined envMap warning
                         mat.envMap = null; 
-
                         child.material = mat;
                     }
                 }
