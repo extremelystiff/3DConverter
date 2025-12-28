@@ -6,7 +6,7 @@
     
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>3D Pro Converter (Adaptive USDZ)</title>
+    <title>3D Pro Converter (Adaptive + Texture Fix)</title>
     
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
@@ -164,7 +164,6 @@
         import * as THREE from "three";
         import { OrbitControls } from "three/addons/controls/OrbitControls.js";
         
-        // Loaders
         import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
         import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
         import { STLLoader } from "three/addons/loaders/STLLoader.js";
@@ -173,11 +172,10 @@
         import { ColladaLoader } from "three/addons/loaders/ColladaLoader.js"; 
         import { TGALoader } from "three/addons/loaders/TGALoader.js"; 
         
-        // --- LOADERS ALIASED ---
+        // --- ADAPTIVE LOADERS ---
         import { USDZLoader as StandardUSDZLoader } from "three/addons/loaders/USDZLoader.js";
         import { USDZLoader as AdvancedUSDZLoader } from "three-usdz-loader";
 
-        // Exporters
         import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
         import { STLExporter } from "three/addons/exporters/STLExporter.js";
         import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
@@ -204,14 +202,15 @@
             controls = new OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
 
-            const ambient = new THREE.AmbientLight(0xffffff, 1.2);
+            // Brighter Lighting for black material issues
+            const ambient = new THREE.AmbientLight(0xffffff, 1.5);
             scene.add(ambient);
-            const mainLight = new THREE.DirectionalLight(0xffffff, 1.5);
+            const mainLight = new THREE.DirectionalLight(0xffffff, 2.0);
             mainLight.position.set(5, 10, 7);
             scene.add(mainLight);
-            const backLight = new THREE.DirectionalLight(0xffffff, 0.5);
-            backLight.position.set(-5, -5, -5);
-            scene.add(backLight);
+            const fillLight = new THREE.DirectionalLight(0xffffff, 1.0);
+            fillLight.position.set(-5, 2, -5);
+            scene.add(fillLight);
 
             const grid = new THREE.GridHelper(10, 20, 0x444444, 0x222222);
             scene.add(grid);
@@ -325,27 +324,24 @@
                 // --- ADAPTIVE USDZ LOGIC ---
                 else if (ext === 'usdz') {
                     try {
-                        console.log("Attempting Standard USDZ Loader (Better for Textures)...");
-                        // 1. Try Standard Loader FIRST. 
+                        console.log("Attempting Standard USDZ Loader...");
                         object = new StandardUSDZLoader(manager).parse(buffer);
 
-                        // --- CRITICAL FIX START ---
-                        // The Standard Loader logs "No usda file found" but DOES NOT throw an error.
-                        // It returns an empty Group. We must manually check for this.
+                        // MANUAL CHECK: Standard loader is polite and doesn't throw on binary files, it just returns empty.
                         if (object.children.length === 0) {
-                            throw new Error("Standard loader returned empty group (Binary/Crate file detected).");
+                            throw new Error("Standard loader returned empty group (Binary/Crate detected).");
                         }
-                        // --- CRITICAL FIX END ---
 
                         console.log("Standard Loader success.");
                     } catch (standardError) {
-                        console.warn("Standard Loader failed/skipped:", standardError.message);
+                        console.warn("Standard Loader failed:", standardError.message);
                         showStatus("Retrying...", "Using Advanced Binary Loader");
                         
-                        // 2. Fallback to Advanced Loader
+                        // Fallback to Advanced Loader
                         try {
                             const advancedLoader = new AdvancedUSDZLoader('./external');
-                            // Inject URL fetching for texture blobs into advanced loader context
+                            
+                            // Texture Injector for Advanced Loader
                             const originalFetch = window.fetch;
                             window.fetch = function(url, ... args) {
                                 const fileName = url.split('/').pop().split('\\').pop();
@@ -358,7 +354,7 @@
                             const modelGroup = new THREE.Group();
                             await advancedLoader.loadFile(mainFile, modelGroup);
                             object = modelGroup;
-                            window.fetch = originalFetch; // Restore fetch
+                            window.fetch = originalFetch; 
                             
                             console.log("Advanced Loader success.");
                         } catch (advancedError) {
@@ -370,12 +366,11 @@
 
                 if (!object) throw new Error("Parsing failed");
 
-                // Double check for empty results even after advanced loader
                 if (object.children.length === 0 && ext === 'usdz') {
-                     // Sometimes advanced loader takes a moment to populate the group
                     await new Promise(r => setTimeout(r, 100)); 
                 }
 
+                // FIX: Apply intelligent material conversion to fix black textures
                 convertToStandardMaterial(object);
                 finalizeScene(object);
 
@@ -386,17 +381,69 @@
             }
         }
 
+        // --- NEW ROBUST MATERIAL CONVERTER ---
+        function convertToStandardMaterial(object) {
+            object.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    const oldMat = Array.isArray(child.material) ? child.material[0] : child.material;
+                    
+                    // Create a clean Standard Material
+                    const newMat = new THREE.MeshStandardMaterial();
+                    
+                    // 1. FIX TEXTURE & COLOR MULTIPLICATION
+                    // If a map exists, we MUST set the base color to white, otherwise
+                    // Texture * Black Base (0x000000) = Black result
+                    if (oldMat.map) {
+                        newMat.map = oldMat.map;
+                        newMat.map.colorSpace = THREE.SRGBColorSpace; // Correct gamma
+                        newMat.color.setHex(0xffffff); // Force White
+                    } else if (oldMat.color) {
+                        // Only inherit color if no texture, or if color is not black
+                        // Some loaders default to black color + texture
+                        if (oldMat.color.getHex() === 0x000000 && oldMat.map) {
+                             newMat.color.setHex(0xffffff);
+                        } else {
+                            newMat.color.copy(oldMat.color);
+                        }
+                    } else {
+                        newMat.color.setHex(0xffffff);
+                    }
+
+                    // 2. FIX METALNESS (The "Black Mirror" Effect)
+                    // If Metalness is 1.0 (common in USDZ) and we have no Environment Map, object is pitch black.
+                    // We force metalness down for the web viewer.
+                    newMat.metalness = 0.1;
+                    newMat.roughness = 0.6;
+
+                    // 3. TRANSFER OTHER MAPS
+                    if (oldMat.normalMap) newMat.normalMap = oldMat.normalMap;
+                    if (oldMat.roughnessMap) newMat.roughnessMap = oldMat.roughnessMap;
+                    if (oldMat.metalnessMap) newMat.metalnessMap = oldMat.metalnessMap;
+                    if (oldMat.emissiveMap) {
+                        newMat.emissiveMap = oldMat.emissiveMap;
+                        newMat.emissive.setHex(0xffffff); // Ensure emissive shines
+                    }
+
+                    // 4. SETTINGS
+                    newMat.side = THREE.DoubleSide; // Safer for imported geometry
+                    newMat.transparent = oldMat.transparent;
+                    newMat.opacity = oldMat.opacity;
+                    
+                    // 5. DISABLE VERTEX COLORS (Common cause of black models from USDZ)
+                    // If geometry has empty vertex colors, it overrides the texture with black.
+                    newMat.vertexColors = false; 
+
+                    child.material = newMat;
+                }
+            });
+        }
+
         function finalizeScene(object) {
             const box = new THREE.Box3().setFromObject(object);
             const center = box.getCenter(new THREE.Vector3());
             const size = box.getSize(new THREE.Vector3());
             const maxDim = Math.max(size.x, size.y, size.z);
             
-            // Check if model is empty/invisible
-            if (maxDim === -Infinity || maxDim === 0) {
-                console.warn("Model loaded but has 0 size");
-            }
-
             object.position.x = -center.x; object.position.y = -center.y; object.position.z = -center.z;
 
             const group = new THREE.Group();
@@ -420,8 +467,6 @@
             showStatus("Converting...", "Generating " + format.toUpperCase());
 
             const exportGroup = currentModel.clone(true);
-            
-            // Apply fixes (Texture baking & USDZ adjustments)
             await prepareForExport(exportGroup, format);
 
             exportGroup.scale.set(1, 1, 1);
@@ -466,26 +511,18 @@
             }
         };
 
-        // --- PREPARE FOR EXPORT (TEXTURE BAKING) ---
         async function prepareForExport(group, format) {
             const processes = [];
-
             group.traverse((child) => {
                 if (child.isMesh && child.material) {
                     const materials = Array.isArray(child.material) ? child.material : [child.material];
-                    
-                    if (Array.isArray(child.material)) {
-                        child.material = materials.map(m => m.clone());
-                    } else {
-                        child.material = child.material.clone();
-                    }
+                    if (Array.isArray(child.material)) { child.material = materials.map(m => m.clone()); } 
+                    else { child.material = child.material.clone(); }
 
                     const matList = Array.isArray(child.material) ? child.material : [child.material];
 
                     matList.forEach(mat => {
-                        if (format === 'usdz') {
-                            mat.side = THREE.FrontSide; 
-                        }
+                        if (format === 'usdz') { mat.side = THREE.FrontSide; }
 
                         if (mat.map && mat.map.image) {
                             processes.push(new Promise(resolve => {
@@ -502,14 +539,11 @@
                                             ctx.scale(1, -1);
                                             mat.map.flipY = false;
                                         }
-
                                         ctx.drawImage(img, 0, 0);
                                         mat.map.image = canvas;
                                         mat.map.needsUpdate = true;
                                         if (!mat.map.name) mat.map.name = "texture_" + Math.random().toString(36).substr(2, 5);
-                                    } catch (e) {
-                                        console.warn("Texture baking failed:", e);
-                                    }
+                                    } catch (e) { console.warn("Texture baking failed:", e); }
                                 }
                                 resolve();
                             }));
@@ -517,27 +551,7 @@
                     });
                 }
             });
-
             await Promise.all(processes);
-        }
-
-        function convertToStandardMaterial(object) {
-            object.traverse((child) => {
-                if (child.isMesh && child.material) {
-                    const old = Array.isArray(child.material) ? child.material[0] : child.material;
-                    if (child.material.type !== 'MeshStandardMaterial') {
-                        const mat = new THREE.MeshStandardMaterial();
-                        if(old.map) mat.map = old.map;
-                        if(old.color) mat.color.copy(old.color);
-                        mat.roughness = 0.5; mat.metalness = 0.1;
-                        mat.side = THREE.DoubleSide; 
-                        mat.transparent = old.transparent; 
-                        mat.opacity = old.opacity;
-                        mat.envMap = null; 
-                        child.material = mat;
-                    }
-                }
-            });
         }
 
         function showStatus(t, s) {
