@@ -4,7 +4,7 @@
     <script src="coi-serviceworker.js"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>3D Pro Converter (Texture Rescue)</title>
+    <title>3D Pro Converter (Texture Rescue V2)</title>
     
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
@@ -132,7 +132,7 @@
         let currentModel = null;
         let originalFileName = "model";
         let blobMap = {}; 
-        let internalTextures = {}; // Store textures found INSIDE the USDZ zip
+        let internalTextures = {}; 
         let textureCount = 0;
 
         function init() {
@@ -285,32 +285,23 @@
                         showStatus("Unpacking...", "Extracting Textures from USDZ");
 
                         // --- 1. MANUAL UNZIP STRATEGY (Rescue Textures) ---
-                        // USDZ is just a ZIP. We unzip it to find the images inside.
                         try {
                             const unzipped = unzipSync(new Uint8Array(buffer));
                             console.log("USDZ Unzipped. Files found:", Object.keys(unzipped));
                             
-                            // Iterate through files in the zip
                             for (const [path, fileData] of Object.entries(unzipped)) {
                                 const lowerPath = path.toLowerCase();
                                 if (lowerPath.endsWith('.png') || lowerPath.endsWith('.jpg') || lowerPath.endsWith('.jpeg')) {
-                                    
-                                    // Create Blob for this internal texture
                                     const blob = new Blob([fileData], { type: lowerPath.endsWith('.png') ? 'image/png' : 'image/jpeg' });
                                     const blobUrl = URL.createObjectURL(blob);
-                                    
-                                    // Get pure filename (e.g., "tex.png" from "material/tex.png")
                                     const fileName = path.split('/').pop();
                                     
-                                    // Add to global maps so loaders can find it
-                                    blobMap[path] = blobUrl;          // Full internal path
-                                    blobMap[fileName] = blobUrl;      // Filename only
+                                    blobMap[path] = blobUrl;
+                                    blobMap[fileName] = blobUrl;
                                     blobMap[fileName.toLowerCase()] = blobUrl;
                                     
-                                    // Store for manual rescue later
                                     internalTextures[fileName] = blobUrl;
                                     internalTextures[fileName.toLowerCase()] = blobUrl;
-                                    
                                     console.log(`Extracted: ${fileName}`);
                                 }
                             }
@@ -318,18 +309,16 @@
                             console.warn("Could not unzip USDZ manually:", zipErr);
                         }
 
-                        // --- 2. ADVANCED LOADER WITH INJECTION ---
+                        // --- 2. ADVANCED LOADER ---
                         showStatus("Retrying...", "Using Advanced Binary Loader");
                         try {
                             const advancedLoader = new AdvancedUSDZLoader('./external');
                             
-                            // Aggressive Texture Fetch Override
+                            // Aggressive Fetch Override
                             const originalFetch = window.fetch;
                             window.fetch = function(url, ... args) {
-                                // Try to match pure filename
                                 const fileName = url.split('/').pop().split('\\').pop();
                                 if (blobMap[fileName] || blobMap[fileName.toLowerCase()]) {
-                                    console.log("Advanced Loader requested", url, "-> Serving Blob");
                                     return originalFetch(blobMap[fileName] || blobMap[fileName.toLowerCase()], ...args);
                                 }
                                 return originalFetch(url, ...args);
@@ -354,7 +343,7 @@
                     await new Promise(r => setTimeout(r, 100)); 
                 }
 
-                // Clean and potentially Rescue Textures
+                // Clean and Rescue Textures
                 cleanMaterial(object);
                 finalizeScene(object);
 
@@ -367,8 +356,6 @@
 
         // --- MATERIAL CLEANER & RESCUE ---
         function cleanMaterial(object) {
-            // Check if we extracted just ONE texture from the zip.
-            // If so, it's highly likely it belongs to the model, so we force apply it.
             const textureKeys = Object.keys(internalTextures);
             const singleRescueTexture = textureKeys.length === 1 ? internalTextures[textureKeys[0]] : null;
             
@@ -378,7 +365,12 @@
 
             object.traverse((child) => {
                 if (child.isMesh) {
-                    
+                    // Check UVs
+                    if (!child.geometry.attributes.uv) {
+                         console.warn("MESH HAS NO UVs:", child.name || "Unnamed");
+                         // Can't map texture without UVs
+                    }
+
                     // Delete vertex colors (Primary cause of black models)
                     if (child.geometry.attributes.color) {
                         child.geometry.deleteAttribute('color');
@@ -390,33 +382,36 @@
                         
                         let hasMap = false;
 
-                        // 1. Transfer existing map if loader succeeded
+                        // 1. Transfer existing map
                         if (oldMat.map) {
                             newMat.map = oldMat.map;
-                            newMat.map.colorSpace = THREE.SRGBColorSpace;
                             hasMap = true;
                         } 
-                        // 2. RESCUE: If no map, check if we found one in ZIP
-                        else if (textureKeys.length > 0) {
-                            // Method A: Check if Texture Name matches Material Name (e.g. Mat "Wood" -> "Wood.png")
-                            // Method B: If only 1 texture exists, force it.
+                        // 2. RESCUE: Force Single Texture
+                        else if (singleRescueTexture) {
+                            console.log("Applying rescued texture to:", child.name || "Mesh");
+                            const tex = textureLoader.load(singleRescueTexture);
+                            tex.colorSpace = THREE.SRGBColorSpace;
                             
-                            if (singleRescueTexture) {
-                                console.log("Applying rescued texture to mesh:", child.name);
-                                const tex = textureLoader.load(singleRescueTexture);
-                                tex.colorSpace = THREE.SRGBColorSpace;
-                                tex.flipY = false; // USDZ usually doesn't need flip, but varies
-                                newMat.map = tex;
-                                hasMap = true;
-                            }
+                            // IMPORTANT: Disable Mipmaps for Blob textures to avoid black/white rendering
+                            tex.generateMipmaps = false;
+                            tex.minFilter = THREE.LinearFilter;
+                            tex.magFilter = THREE.LinearFilter;
+                            
+                            // Try default flip (Standard Three.js is true, but USDZ is often false)
+                            // If user says "white", it means texture is loading but maybe invalid data or wrong UVs
+                            // Let's try flipY = false (Standard USDZ)
+                            tex.flipY = false; 
+
+                            newMat.map = tex;
+                            hasMap = true;
                         }
 
                         // Colors
                         if (hasMap) {
-                            newMat.color.setHex(0xffffff); // Force white so texture shows
+                            newMat.color.setHex(0xffffff); // Force white
                         } else {
                             if (oldMat.color) newMat.color.copy(oldMat.color);
-                            // If black and no texture, make grey
                             if (newMat.color.getHex() === 0x000000) newMat.color.setHex(0xaaaaaa);
                         }
 
@@ -428,6 +423,7 @@
                         newMat.opacity = oldMat.opacity;
 
                         child.material = newMat;
+                        child.material.needsUpdate = true;
                     }
                 }
             });
