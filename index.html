@@ -139,6 +139,24 @@
             </div>
         </div>
 
+        <div class="mb-3" id="dimensions-section" style="display: none;">
+            <label class="form-label text-muted small fw-bold mb-1" style="font-size: 0.7rem;">DIMENSIONS</label>
+            <div class="bg-dark p-2 rounded border border-secondary">
+                <div class="small text-muted mb-1" style="font-size: 0.75rem;">
+                    <strong>Original:</strong> <span id="original-dimensions" class="text-white">-</span>
+                </div>
+                <div class="small text-muted mb-2" style="font-size: 0.75rem;">
+                    <strong>Export:</strong> <span id="export-dimensions" class="text-white">-</span>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="apply-viewer-scale" checked>
+                    <label class="form-check-label small" for="apply-viewer-scale" style="font-size: 0.8rem;">
+                        Apply Viewer Scale (AR-friendly)
+                    </label>
+                </div>
+            </div>
+        </div>
+
         <div class="mt-auto">
             <div class="d-flex gap-2">
                 <select id="export-format" class="form-select">
@@ -188,6 +206,8 @@
         let originalFileName = "model";
         let blobMap = {}; 
         let textureCount = 0;
+        let originalDimensions = { x: 0, y: 0, z: 0 };
+        let viewerScale = 1;
 
         function init() {
             const container = document.getElementById("viewer-container");
@@ -392,6 +412,9 @@
             const size = box.getSize(new THREE.Vector3());
             const maxDim = Math.max(size.x, size.y, size.z);
             
+            // Store original dimensions
+            originalDimensions = { x: size.x, y: size.y, z: size.z };
+            
             // Check if model is empty/invisible
             if (maxDim === -Infinity || maxDim === 0) {
                 console.warn("Model loaded but has 0 size");
@@ -405,17 +428,51 @@
 
             let scaleFactor = 3 / maxDim;
             if(!isFinite(scaleFactor) || scaleFactor === 0) scaleFactor = 1;
+            viewerScale = scaleFactor;
             currentModel.scale.set(scaleFactor, scaleFactor, scaleFactor);
 
             scene.add(currentModel);
             document.getElementById('btn-convert').disabled = false;
+            
+            // Update dimensions display
+            updateDimensionsDisplay();
+            document.getElementById('dimensions-section').style.display = 'block';
+            
             hideStatus();
+        }
+
+        // --- UPDATE DIMENSIONS DISPLAY ---
+        function updateDimensionsDisplay() {
+            const applyScale = document.getElementById('apply-viewer-scale').checked;
+            
+            // Format dimensions nicely
+            const formatDim = (x, y, z) => {
+                return `${x.toFixed(2)} × ${y.toFixed(2)} × ${z.toFixed(2)} units`;
+            };
+            
+            document.getElementById('original-dimensions').innerText = 
+                formatDim(originalDimensions.x, originalDimensions.y, originalDimensions.z);
+            
+            if (applyScale) {
+                // Export dimensions will be scaled
+                const scaled = {
+                    x: originalDimensions.x * viewerScale,
+                    y: originalDimensions.y * viewerScale,
+                    z: originalDimensions.z * viewerScale
+                };
+                document.getElementById('export-dimensions').innerText = formatDim(scaled.x, scaled.y, scaled.z);
+            } else {
+                // Export dimensions will be original
+                document.getElementById('export-dimensions').innerText = 
+                    formatDim(originalDimensions.x, originalDimensions.y, originalDimensions.z);
+            }
         }
 
         // --- EXPORT FUNCTION ---
         window.convert = async function() {
             if (!currentModel) return;
             const format = document.getElementById('export-format').value;
+            const applyViewerScale = document.getElementById('apply-viewer-scale').checked;
             
             showStatus("Converting...", "Generating " + format.toUpperCase());
 
@@ -424,7 +481,14 @@
             // Apply fixes (Texture baking & USDZ adjustments)
             await prepareForExport(exportGroup, format);
 
-            exportGroup.scale.set(1, 1, 1);
+            // Apply scale based on toggle
+            if (applyViewerScale) {
+                // Keep the viewer scale (normalized to ~3 units)
+                exportGroup.scale.set(viewerScale, viewerScale, viewerScale);
+            } else {
+                // Reset to original scale
+                exportGroup.scale.set(1, 1, 1);
+            }
             exportGroup.updateMatrixWorld(true);
 
             try {
@@ -549,6 +613,10 @@
 
         init();
         setupRotationListeners();
+        
+        // Add event listener for the scale toggle
+        document.getElementById('apply-viewer-scale').addEventListener('change', updateDimensionsDisplay);
+        
         const dropZone = document.getElementById('drop-zone');
         const input = document.getElementById('file-input');
         input.addEventListener('change', (e) => { if(e.target.files.length) window.handleFiles(e.target.files); });
