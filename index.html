@@ -4,7 +4,7 @@
     <script src="coi-serviceworker.js"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>3D Pro (Sizing Fixed)</title>
+    <title>3D Pro Converter (Fixed Sizing)</title>
     
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
@@ -23,538 +23,670 @@
 
     <style>
         :root { --app-height: 100svh; }
-        body { background-color: #050505; color: #e0e0e0; font-family: system-ui, sans-serif; height: 100vh; height: 100svh; overflow: hidden; display: flex; flex-direction: row; margin: 0; }
-        
-        .sidebar { width: 360px; background: #151515; border-right: 1px solid #333; display: flex; flex-direction: column; padding: 20px; z-index: 20; overflow-y: auto; }
-        .viewer { flex: 1; position: relative; background: radial-gradient(circle at center, #252525 0%, #000 100%); }
-        
-        /* Inputs */
-        .form-control, .form-select, .input-group-text { background: #222; border: 1px solid #444; color: white; font-size: 0.85rem; }
-        .form-control:focus { background: #333; color: white; border-color: #0d6efd; box-shadow: none; }
-        .input-group-text { color: #888; border-color: #444; width: 45px; justify-content: center; }
-        input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
-        .drop-zone { border: 2px dashed #444; border-radius: 8px; padding: 20px; text-align: center; margin-bottom: 20px; cursor: pointer; background: #1a1a1a; transition: 0.2s; }
-        .drop-zone:hover { border-color: #0d6efd; background: #222; }
+        body { 
+            background-color: #000; 
+            color: #e0e0e0; 
+            font-family: 'Segoe UI', system-ui, sans-serif; 
+            height: 100vh; 
+            height: 100svh; 
+            overflow: hidden; 
+            display: flex;
+            flex-direction: row; 
+            margin: 0;
+        }
 
-        #status-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 1000; display: none; flex-direction: column; justify-content: center; align-items: center; }
+        .sidebar { 
+            width: 380px; 
+            background: #1a1a1a; 
+            border-right: 1px solid #333; 
+            display: flex; 
+            flex-direction: column; 
+            padding: 20px; 
+            z-index: 20; 
+            overflow-y: auto;
+            box-shadow: 4px 0 15px rgba(0,0,0,0.5);
+        }
+
+        .viewer { 
+            flex: 1; 
+            position: relative; 
+            background: radial-gradient(circle at center, #2a2a2a 0%, #000 100%); 
+        }
+
+        .form-control, .form-select, .input-group-text { background: #2c2c2c; border: 1px solid #444; color: white; font-size: 0.9rem; }
+        .form-control:focus, .form-select:focus { background: #333; color: white; border-color: #0d6efd; box-shadow: none; }
+        .input-group-text { color: #aaa; border-color: #444; min-width: 40px; justify-content: center; }
+        
+        .drop-zone { 
+            border: 2px dashed #444; border-radius: 12px; padding: 20px; 
+            text-align: center; margin-bottom: 20px; transition: all 0.2s; 
+            cursor: pointer; background: #222;
+        }
+        .drop-zone:hover, .drop-zone:active { border-color: #0d6efd; background: #2a2a2a; }
+
+        /* Sliders */
+        .range-wrap { margin-bottom: 8px; display: flex; align-items: center; }
+        .range-wrap label { width: 30px; font-weight: bold; font-size: 0.8rem; color: #888; }
+        .range-wrap input { flex: 1; accent-color: #0d6efd; cursor: pointer; }
+        .range-val { width: 35px; text-align: right; font-size: 0.75rem; color: #aaa; font-family: monospace; }
+
+        #status-overlay { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: rgba(0,0,0,0.9); z-index: 1000; 
+            display: none; flex-direction: column; 
+            justify-content: center; align-items: center; text-align: center; 
+        }
 
         @media (max-width: 900px) {
             body { flex-direction: column; }
-            .viewer { height: 45%; width: 100%; order: 1; }
-            .sidebar { width: 100%; height: 55%; order: 2; border-right: none; border-top: 2px solid #333; }
+            .viewer { height: 40%; width: 100%; order: 1; }
+            .sidebar {
+                width: 100%; height: 60%; order: 2;
+                border-right: none; border-top: 2px solid #333;
+                padding: 15px;
+                padding-bottom: calc(15px + env(safe-area-inset-bottom)); 
+            }
         }
     </style>
 </head>
 <body>
 
     <div class="viewer" id="viewer-container">
-        <div style="position: absolute; top: 15px; left: 15px; pointer-events: none; opacity: 0.6; font-size: 12px;">
-            <i class="bi bi-mouse"></i> Drag to Rotate &bull; Scroll to Zoom
+        <div style="position: absolute; top: 10px; left: 10px; opacity: 0.5; font-size: 0.7rem; pointer-events: none;">
+            <i class="bi bi-arrows-move"></i> Drag to Rotate View
+        </div>
+        <div style="position: absolute; bottom: 10px; left: 10px; font-size: 0.75rem; color: #888;">
+            <span id="scale-indicator">1 Unit = 1 Meter</span>
         </div>
     </div>
 
     <div class="sidebar">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h6 class="text-white m-0 fw-bold"><i class="bi bi-box-seam text-primary"></i> 3D PRO EXPORTER</h6>
-            <button class="btn btn-sm btn-outline-secondary" onclick="location.reload()" style="font-size: 0.75rem;">New</button>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="text-primary m-0"><i class="bi bi-box-seam"></i> 3D Pro</h5>
+            <button class="btn btn-sm btn-outline-secondary" onclick="location.reload()"><i class="bi bi-arrow-clockwise"></i> Reset</button>
         </div>
         
-        <!-- DROP ZONE -->
-        <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
-            <i class="bi bi-cloud-upload fs-4 text-secondary"></i>
-            <div class="mt-2 small text-muted">Click or Drag Files Here</div>
-            <div style="font-size: 0.65rem; color: #555;">(GLB, USDZ, OBJ, STL, FBX)</div>
-        </div>
-        <input type="file" id="file-input" class="d-none" multiple accept="*">
-
-        <!-- FILE INFO -->
-        <div id="file-info" class="d-none mb-3 p-2 bg-dark rounded border border-secondary">
-            <div class="d-flex justify-content-between small">
-                <span class="text-white text-truncate" id="filename-display" style="max-width: 180px;">-</span>
-                <span class="text-muted" id="texture-display">0 Maps</span>
+        <div class="mb-2">
+            <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+                <i class="bi bi-cloud-arrow-up fs-2 text-secondary"></i>
+                <div class="mt-1 small"><strong class="text-white">Tap to Select Files</strong></div>
+                <div class="small text-muted" style="font-size: 0.7em">(USDZ, GLB, OBJ, FBX, STL)</div>
             </div>
-        </div>
-
-        <!-- DIMENSIONS -->
-        <div id="controls-section" class="d-none">
+            <input type="file" id="file-input" class="d-none" multiple accept=".stl,.obj,.mtl,.fbx,.glb,.gltf,.usdz,.dae,.png,.jpg,.jpeg,.tga">
             
-            <div class="mb-3">
-                <label class="small text-muted fw-bold mb-2">TARGET DIMENSIONS (METERS)</label>
-                
-                <div class="input-group input-group-sm mb-2">
-                    <span class="input-group-text">W</span>
-                    <input type="number" id="dim-x" class="form-control" onchange="applyUserDimension('x')" step="0.01">
-                    <span class="input-group-text">m</span>
-                </div>
-                <div class="input-group input-group-sm mb-2">
-                    <span class="input-group-text">H</span>
-                    <input type="number" id="dim-y" class="form-control" onchange="applyUserDimension('y')" step="0.01">
-                    <span class="input-group-text">m</span>
-                </div>
-                <div class="input-group input-group-sm mb-2">
-                    <span class="input-group-text">D</span>
-                    <input type="number" id="dim-z" class="form-control" onchange="applyUserDimension('z')" step="0.01">
-                    <span class="input-group-text">m</span>
-                </div>
-            </div>
-
-            <div class="mb-4">
-                <label class="small text-muted fw-bold mb-2">QUICK FIX: ORIGINAL UNITS</label>
-                <div class="btn-group w-100" role="group">
-                    <button class="btn btn-outline-secondary btn-sm" onclick="setBaseUnit('mm')">mm</button>
-                    <button class="btn btn-outline-secondary btn-sm" onclick="setBaseUnit('cm')">cm</button>
-                    <button class="btn btn-outline-secondary btn-sm" onclick="setBaseUnit('in')">inch</button>
-                    <button class="btn btn-outline-secondary btn-sm" onclick="setBaseUnit('m')">meter</button>
-                </div>
-                <div class="text-muted mt-1" style="font-size: 0.7rem; line-height: 1.2;">
-                    *Click what the model was built in to auto-correct scale for AR.
-                </div>
-            </div>
-
-            <div class="mb-3">
-                <label class="small text-muted fw-bold mb-1">ROTATION</label>
-                <div class="d-flex gap-2">
-                    <button class="btn btn-dark btn-sm flex-fill border-secondary" onclick="rotateModel('x')">X 90°</button>
-                    <button class="btn btn-dark btn-sm flex-fill border-secondary" onclick="rotateModel('y')">Y 90°</button>
-                    <button class="btn btn-dark btn-sm flex-fill border-secondary" onclick="rotateModel('z')">Z 90°</button>
+            <div id="file-list" class="d-none mb-3">
+                <div class="d-flex justify-content-between align-items-center bg-dark border border-secondary rounded p-2 small">
+                    <span id="model-name" class="text-truncate" style="max-width: 150px;">Model</span>
+                    <span id="texture-count" class="badge bg-secondary">0 Textures</span>
                 </div>
             </div>
         </div>
 
-        <div class="mt-auto pt-3 border-top border-secondary">
-            <div class="d-flex gap-2">
-                <select id="export-format" class="form-select form-select-sm">
-                    <option value="glb">GLB (Android/Web)</option>
-                    <option value="usdz">USDZ (iPhone AR)</option>
-                    <option value="obj">OBJ</option>
-                    <option value="stl">STL</option>
+        <div class="mb-3">
+            <label class="form-label text-muted small fw-bold mb-1" style="font-size: 0.7rem;">ROTATION</label>
+            <div class="bg-dark p-2 rounded border border-secondary">
+                <div class="range-wrap"><label class="text-danger">X</label><input type="range" class="rot-slider" id="rot-x" min="-180" max="180" value="0"><span class="range-val" id="val-x">0°</span></div>
+                <div class="range-wrap"><label class="text-success">Y</label><input type="range" class="rot-slider" id="rot-y" min="-180" max="180" value="0"><span class="range-val" id="val-y">0°</span></div>
+                <div class="range-wrap"><label class="text-primary">Z</label><input type="range" class="rot-slider" id="rot-z" min="-180" max="180" value="0"><span class="range-val" id="val-z">0°</span></div>
+                <button class="btn btn-sm btn-outline-secondary w-100 mt-1 py-0" style="font-size: 0.8rem;" onclick="resetRotation()">Zero Rotation</button>
+            </div>
+        </div>
+
+        <!-- NEW MEASUREMENTS SECTION -->
+        <div class="mb-3" id="dimensions-section" style="display: none;">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+                <label class="form-label text-muted small fw-bold m-0" style="font-size: 0.7rem;">MEASUREMENTS</label>
+                <select id="unit-select" class="form-select form-select-sm py-0" style="width: auto; height: 24px; font-size: 0.75rem;" onchange="updateUI()">
+                    <option value="mm">Millimeters (mm)</option>
+                    <option value="cm">Centimeters (cm)</option>
+                    <option value="in">Inches</option>
+                    <option value="m">Meters (AR Standard)</option>
                 </select>
-                <button id="btn-convert" class="btn btn-primary btn-sm px-4 flex-grow-1" disabled onclick="exportModel()">
-                    Download
+            </div>
+            
+            <div class="bg-dark p-2 rounded border border-secondary">
+                <div class="input-group input-group-sm mb-1">
+                    <span class="input-group-text bg-dark border-secondary">X</span>
+                    <input type="number" id="dim-x" class="form-control" step="0.1" onchange="resizeFromUI('x')">
+                    <span class="input-group-text bg-dark border-secondary unit-label">mm</span>
+                </div>
+                <div class="input-group input-group-sm mb-1">
+                    <span class="input-group-text bg-dark border-secondary">Y</span>
+                    <input type="number" id="dim-y" class="form-control" step="0.1" onchange="resizeFromUI('y')">
+                    <span class="input-group-text bg-dark border-secondary unit-label">mm</span>
+                </div>
+                <div class="input-group input-group-sm mb-2">
+                    <span class="input-group-text bg-dark border-secondary">Z</span>
+                    <input type="number" id="dim-z" class="form-control" step="0.1" onchange="resizeFromUI('z')">
+                    <span class="input-group-text bg-dark border-secondary unit-label">mm</span>
+                </div>
+
+                <div class="accordion accordion-flush" id="scaleAccord">
+                    <div class="accordion-item bg-transparent">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed py-1 px-0 bg-transparent text-muted small" type="button" data-bs-toggle="collapse" data-bs-target="#scaleTools" style="font-size: 0.8rem;">
+                                <i class="bi bi-tools me-2"></i> Unit Converters
+                            </button>
+                        </h2>
+                        <div id="scaleTools" class="accordion-collapse collapse">
+                            <div class="pt-2">
+                                <div class="d-grid gap-1">
+                                    <button class="btn btn-outline-warning btn-sm" style="font-size: 0.75rem" onclick="convertOriginalUnits('mm')">
+                                        Imported as mm? (Shrink to Meters)
+                                    </button>
+                                    <button class="btn btn-outline-info btn-sm" style="font-size: 0.75rem" onclick="convertOriginalUnits('m')">
+                                        Imported as Meters? (Scale to mm)
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-auto">
+            <div class="d-flex gap-2">
+                <select id="export-format" class="form-select">
+                    <option value="glb">GLB (Web/AR)</option>
+                    <option value="usdz">USDZ (iPhone)</option>
+                    <option value="obj">OBJ (Print)</option>
+                    <option value="stl">STL (Print)</option>
+                </select>
+                <button id="btn-convert" class="btn btn-primary px-4 flex-grow-1" disabled onclick="window.convert()">
+                    <i class="bi bi-download"></i> Save
                 </button>
             </div>
         </div>
     </div>
 
     <div id="status-overlay">
-        <div class="spinner-border text-primary mb-3"></div>
-        <div class="text-white fw-bold" id="status-text">Processing...</div>
+        <div class="spinner-border text-primary mb-3" style="width: 3rem; height: 3rem;"></div>
+        <h5 class="text-white" id="status-text">Processing...</h5>
+        <small class="text-muted" id="status-sub">Please wait</small>
     </div>
 
+    <!-- Bootstrap JS for Accordion -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
 <script type="module">
-    import * as THREE from "three";
-    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-    import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
-    import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
-    import { STLLoader } from "three/addons/loaders/STLLoader.js";
-    import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-    import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
-    import { USDZLoader } from "three/addons/loaders/USDZLoader.js";
-    import { USDZLoader as AdvancedUSDZLoader } from "three-usdz-loader";
-    
-    // Exporters
-    import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
-    import { USDZExporter } from "three/addons/exporters/USDZExporter.js";
-    import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
-    import { STLExporter } from "three/addons/exporters/STLExporter.js";
-
-    let scene, camera, renderer, controls, gridHelper;
-    let modelGroup = null; // The container for the loaded model
-    let rawGeometryBox = null; // The bounding box of the unscaled geometry
-    let currentFileName = "model";
-
-    // Initialize Viewer
-    function init() {
-        const container = document.getElementById("viewer-container");
+        import * as THREE from "three";
+        import { OrbitControls } from "three/addons/controls/OrbitControls.js";
         
-        scene = new THREE.Scene();
-        // Slightly lighter background for better contrast
-        scene.background = new THREE.Color(0x111111);
-
-        camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.01, 2000);
-        camera.position.set(2, 2, 5);
-
-        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
-        renderer.setSize(container.clientWidth, container.clientHeight);
-        renderer.setPixelRatio(window.devicePixelRatio);
-        renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1.0;
-        renderer.outputColorSpace = THREE.SRGBColorSpace;
-        container.appendChild(renderer.domElement);
-
-        controls = new OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true;
-        controls.dampingFactor = 0.05;
-
-        // Lighting
-        const ambient = new THREE.AmbientLight(0xffffff, 1.5);
-        scene.add(ambient);
+        // Loaders
+        import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+        import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
+        import { STLLoader } from "three/addons/loaders/STLLoader.js";
+        import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+        import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
+        import { ColladaLoader } from "three/addons/loaders/ColladaLoader.js"; 
+        import { TGALoader } from "three/addons/loaders/TGALoader.js"; 
         
-        const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
-        dirLight.position.set(5, 10, 7);
-        scene.add(dirLight);
+        import { USDZLoader as StandardUSDZLoader } from "three/addons/loaders/USDZLoader.js";
+        import { USDZLoader as AdvancedUSDZLoader } from "three-usdz-loader";
 
-        const backLight = new THREE.DirectionalLight(0xffffff, 1.0);
-        backLight.position.set(-5, 5, -5);
-        scene.add(backLight);
+        // Exporters
+        import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
+        import { STLExporter } from "three/addons/exporters/STLExporter.js";
+        import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
+        import { USDZExporter } from "three/addons/exporters/USDZExporter.js";
 
-        // Grid
-        gridHelper = new THREE.GridHelper(10, 10, 0x444444, 0x222222);
-        scene.add(gridHelper);
-
-        window.addEventListener('resize', () => {
-            camera.aspect = container.clientWidth / container.clientHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(container.clientWidth, container.clientHeight);
-        });
-
-        animate();
-    }
-
-    function animate() {
-        requestAnimationFrame(animate);
-        controls.update();
-        renderer.render(scene, camera);
-    }
-
-    // --- FILE HANDLING ---
-    
-    const blobMap = {};
-
-    window.handleFiles = async function(files) {
-        if(modelGroup) { scene.remove(modelGroup); modelGroup = null; }
-        
-        document.getElementById('status-overlay').style.display = 'flex';
-        document.getElementById('status-text').innerText = "Loading...";
-
-        let mainFile = null;
-        let mtlFile = null;
+        let scene, camera, renderer, controls, grid;
+        let currentModel = null;
+        let originalFileName = "model";
+        let blobMap = {}; 
         let textureCount = 0;
+        
+        // Internal size tracking
+        let bbox = new THREE.Box3();
+        let size = new THREE.Vector3();
 
-        // Sort files
-        for(let i=0; i<files.length; i++) {
-            const f = files[i];
-            const ext = f.name.split('.').pop().toLowerCase();
-            const url = URL.createObjectURL(f);
-            blobMap[f.name] = url; // Exact match
-            blobMap[f.name.toLowerCase()] = url; // Lowercase match
+        function init() {
+            const container = document.getElementById("viewer-container");
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.01, 2000);
+            camera.position.set(5, 5, 10);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.outputColorSpace = THREE.SRGBColorSpace; 
+            container.appendChild(renderer.domElement);
+            
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
 
-            if(['obj','fbx','glb','gltf','stl','usdz'].includes(ext)) {
-                mainFile = f;
-                currentFileName = f.name.split('.')[0];
-            } else if(ext === 'mtl') {
-                mtlFile = f;
-            } else if(['jpg','png','jpeg'].includes(ext)) {
-                textureCount++;
-            }
+            const ambient = new THREE.AmbientLight(0xffffff, 1.2);
+            scene.add(ambient);
+            const mainLight = new THREE.DirectionalLight(0xffffff, 1.5);
+            mainLight.position.set(5, 10, 7);
+            scene.add(mainLight);
+            const backLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            backLight.position.set(-5, -5, -5);
+            scene.add(backLight);
+
+            grid = new THREE.GridHelper(20, 20, 0x444444, 0x222222);
+            scene.add(grid);
+
+            window.addEventListener('resize', () => {
+                camera.aspect = container.clientWidth / container.clientHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(container.clientWidth, container.clientHeight);
+            });
+            animate();
         }
 
-        if(!mainFile) {
-            alert("No 3D model found!");
-            document.getElementById('status-overlay').style.display = 'none';
-            return;
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
         }
 
-        document.getElementById('file-info').classList.remove('d-none');
-        document.getElementById('filename-display').innerText = mainFile.name;
-        document.getElementById('texture-display').innerText = textureCount + " textures";
-
-        try {
-            await loadModel(mainFile, mtlFile);
-        } catch(e) {
-            console.error(e);
-            alert("Error: " + e.message);
-            document.getElementById('status-overlay').style.display = 'none';
+        function setupRotationListeners() {
+            ['x', 'y', 'z'].forEach(axis => {
+                document.getElementById(`rot-${axis}`).addEventListener('input', (e) => {
+                    const deg = parseInt(e.target.value);
+                    document.getElementById(`val-${axis}`).innerText = `${deg}°`;
+                    if (currentModel) currentModel.rotation[axis] = deg * (Math.PI / 180);
+                    // Rotation changes BBox dimensions, update UI
+                    updateGeometryData();
+                    updateUI();
+                });
+            });
         }
-    };
+        
+        window.resetRotation = function() {
+            ['x', 'y', 'z'].forEach(axis => {
+                document.getElementById(`rot-${axis}`).value = 0;
+                document.getElementById(`val-${axis}`).innerText = "0°";
+                if(currentModel) currentModel.rotation[axis] = 0;
+            });
+            updateGeometryData();
+            updateUI();
+        }
 
-    async function loadModel(file, mtlFile) {
-        const manager = new THREE.LoadingManager();
-        // Redirect texture requests to Blobs
-        manager.setURLModifier((url) => {
-            const name = url.split('/').pop();
-            if(blobMap[name]) return blobMap[name];
-            if(blobMap[name.toLowerCase()]) return blobMap[name.toLowerCase()];
-            return url;
-        });
+        window.handleFiles = async function(fileList) {
+            showStatus("Analyzing...", "Reading files");
+            if(currentModel) { scene.remove(currentModel); currentModel = null; }
+            blobMap = {};
+            textureCount = 0;
+            let mainFile = null;
+            let mtlFile = null;
 
-        const ext = file.name.split('.').pop().toLowerCase();
-        const buffer = await file.arrayBuffer();
-        let object;
+            for (let i = 0; i < fileList.length; i++) {
+                const file = fileList[i];
+                const ext = file.name.split('.').pop().toLowerCase();
+                const url = URL.createObjectURL(file);
+                blobMap[file.name] = url; 
+                blobMap[file.name.toLowerCase()] = url; 
 
-        if(ext === 'obj') {
-            if(mtlFile) {
-                const mtlStr = await mtlFile.text();
-                const materials = new MTLLoader(manager).parse(mtlStr);
-                materials.preload();
-                object = new OBJLoader(manager).setMaterials(materials).parse(new TextDecoder().decode(buffer));
-            } else {
-                object = new OBJLoader(manager).parse(new TextDecoder().decode(buffer));
-            }
-        } else if(ext === 'glb' || ext === 'gltf') {
-            const gltf = await new Promise((res, rej) => new GLTFLoader(manager).parse(buffer, '', res, rej));
-            object = gltf.scene;
-        } else if(ext === 'fbx') {
-            object = new FBXLoader(manager).parse(buffer, '');
-        } else if(ext === 'stl') {
-            const geo = new STLLoader(manager).parse(buffer);
-            object = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({color: 0xaaaaaa}));
-        } else if(ext === 'usdz') {
-            // Attempt standard loader first, then fallback to advanced
-            try {
-                object = new USDZLoader(manager).parse(buffer);
-                if(object.children.length === 0) throw new Error("Empty USDZ");
-            } catch(e) {
-                console.log("Switching to advanced USDZ loader");
-                const advancedLoader = new AdvancedUSDZLoader('./external');
-                const group = new THREE.Group();
-                
-                // Hack fetch for advanced loader blobs
-                const _fetch = window.fetch;
-                window.fetch = (url, opts) => {
-                    const name = url.split('/').pop();
-                    if(blobMap[name]) return _fetch(blobMap[name], opts);
-                    return _fetch(url, opts);
+                if (['jpg','jpeg','png','tga','bmp','webp'].includes(ext)) textureCount++;
+                else if (ext === 'mtl') mtlFile = file;
+                else if (['obj','fbx','dae','glb','gltf','stl','usdz'].includes(ext)) {
+                    mainFile = file;
+                    originalFileName = file.name.split('.')[0];
                 }
-                await advancedLoader.loadFile(file, group);
-                window.fetch = _fetch;
-                object = group;
+            }
+
+            if (!mainFile) {
+                alert("No model found. Please drop a model file.");
+                hideStatus();
+                return;
+            }
+
+            document.getElementById('file-list').classList.remove('d-none');
+            document.getElementById('model-name').innerText = mainFile.name;
+            document.getElementById('texture-count').innerText = `${textureCount} Textures`;
+            
+            window.resetRotation();
+            loadModel(mainFile, mtlFile);
+        };
+
+        async function loadModel(mainFile, mtlFile) {
+            showStatus("Loading...", "Parsing 3D data");
+
+            const manager = new THREE.LoadingManager();
+            manager.setURLModifier((url) => {
+                const fileName = url.split('/').pop().split('\\').pop(); 
+                if (blobMap[fileName]) return blobMap[fileName];
+                if (blobMap[fileName.toLowerCase()]) return blobMap[fileName.toLowerCase()];
+                return url;
+            });
+            manager.addHandler(/\.tga$/i, new TGALoader());
+
+            const ext = mainFile.name.split('.').pop().toLowerCase();
+            const buffer = await mainFile.arrayBuffer();
+
+            try {
+                let object;
+                
+                if (ext === 'obj') {
+                    if (mtlFile) {
+                        const mtlText = await mtlFile.text();
+                        const materials = new MTLLoader(manager).parse(mtlText);
+                        materials.preload();
+                        object = new OBJLoader(manager).setMaterials(materials).parse(new TextDecoder().decode(buffer));
+                    } else {
+                        object = new OBJLoader(manager).parse(new TextDecoder().decode(buffer));
+                    }
+                } 
+                else if (ext === 'fbx') object = new FBXLoader(manager).parse(buffer, '');
+                else if (ext === 'dae') object = new ColladaLoader(manager).parse(new TextDecoder().decode(buffer), '').scene;
+                else if (ext === 'glb' || ext === 'gltf') {
+                    await new Promise((resolve, reject) => {
+                        new GLTFLoader(manager).parse(buffer, '', (g) => { object = g.scene; resolve(); }, (e) => { reject(e); });
+                    });
+                }
+                else if (ext === 'stl') object = new THREE.Mesh(new STLLoader(manager).parse(buffer), new THREE.MeshStandardMaterial({color: 0xcccccc}));
+                
+                else if (ext === 'usdz') {
+                    try {
+                        object = new StandardUSDZLoader(manager).parse(buffer);
+                        if (object.children.length === 0) throw new Error("Empty group");
+                    } catch (standardError) {
+                        const advancedLoader = new AdvancedUSDZLoader('./external');
+                        const originalFetch = window.fetch;
+                        window.fetch = function(url, ... args) {
+                            const fileName = url.split('/').pop().split('\\').pop();
+                            if (blobMap[fileName] || blobMap[fileName.toLowerCase()]) {
+                                return originalFetch(blobMap[fileName] || blobMap[fileName.toLowerCase()], ...args);
+                            }
+                            return originalFetch(url, ...args);
+                        };
+                        const modelGroup = new THREE.Group();
+                        await advancedLoader.loadFile(mainFile, modelGroup);
+                        object = modelGroup;
+                        window.fetch = originalFetch;
+                    }
+                }
+
+                if (!object) throw new Error("Parsing failed");
+                if (object.children.length === 0 && ext === 'usdz') await new Promise(r => setTimeout(r, 100));
+
+                convertToStandardMaterial(object);
+                finalizeScene(object);
+
+            } catch (err) {
+                console.error(err);
+                hideStatus();
+                alert("Error loading file:\n" + err.message);
             }
         }
 
-        if(!object) throw new Error("Could not parse file");
+        function finalizeScene(object) {
+            // Get Box Info
+            const tempBox = new THREE.Box3().setFromObject(object);
+            const center = tempBox.getCenter(new THREE.Vector3());
+            const maxDim = Math.max(tempBox.max.x - tempBox.min.x, tempBox.max.y - tempBox.min.y);
 
-        setupScene(object);
-    }
+            // Center Geometry
+            object.position.x = -center.x; 
+            object.position.y = -center.y; 
+            object.position.z = -center.z;
 
-    function setupScene(object) {
-        modelGroup = new THREE.Group();
-        
-        // 1. Center the geometry inside the group
-        const box = new THREE.Box3().setFromObject(object);
-        
-        // Handle Empty Models
-        if(box.isEmpty()) {
-            alert("Model appears empty or invisible.");
-            document.getElementById('status-overlay').style.display = 'none';
-            return;
+            // Wrap in Group
+            const group = new THREE.Group();
+            group.add(object);
+            currentModel = group;
+
+            scene.add(currentModel);
+            document.getElementById('btn-convert').disabled = false;
+            
+            // Adjust Camera safely
+            fitCamera(maxDim);
+
+            // UI
+            updateGeometryData();
+            document.getElementById('dimensions-section').style.display = 'block';
+            updateUI();
+            
+            hideStatus();
         }
 
-        const center = box.getCenter(new THREE.Vector3());
-        object.position.sub(center); // Centers object at 0,0,0 inside group
-        object.position.y += (box.max.y - box.min.y) / 2; // Sit on floor
-
-        modelGroup.add(object);
-        scene.add(modelGroup);
-
-        // 2. Capture RAW size (Unscaled)
-        // We need to know how big the geometry is naturally to calculate scale factors
-        const size = new THREE.Vector3();
-        box.getSize(size);
-        rawGeometryBox = size; // e.g., {x: 100, y: 200, z: 50}
-
-        // 3. Initial "Safe" View
-        // If the model is crazy huge or tiny, let's just make sure the camera sees it.
-        // We do NOT change the scale yet. We move the camera.
-        fitCameraToObj(modelGroup);
-
-        // 4. Update UI
-        updateDimensionInputs();
-        document.getElementById('controls-section').classList.remove('d-none');
-        document.getElementById('btn-convert').disabled = false;
-        document.getElementById('status-overlay').style.display = 'none';
-    }
-
-    // --- SCALING LOGIC ---
-
-    // 1. Convert Unit Button Clicked
-    window.setBaseUnit = function(unit) {
-        if(!modelGroup || !rawGeometryBox) return;
-
-        let multiplier = 1;
-        // Logic: Convert FROM source unit TO Meters
-        if(unit === 'mm') multiplier = 0.001;
-        if(unit === 'cm') multiplier = 0.01;
-        if(unit === 'in') multiplier = 0.0254;
-        if(unit === 'm') multiplier = 1.0;
-
-        // Apply scale
-        modelGroup.scale.set(multiplier, multiplier, multiplier);
-        
-        // Recenter camera because object size changed drastically
-        fitCameraToObj(modelGroup);
-        updateDimensionInputs();
-    }
-
-    // 2. User typed specific number (e.g. 2.0 meters)
-    window.applyUserDimension = function(axis) {
-        if(!modelGroup || !rawGeometryBox) return;
-        
-        const inputId = `dim-${axis}`;
-        const targetSize = parseFloat(document.getElementById(inputId).value);
-
-        if(isNaN(targetSize) || targetSize <= 0) return;
-
-        // rawGeometry * scale = targetSize
-        // scale = targetSize / rawGeometry
-        
-        let newScale = 1;
-        if(axis === 'x') newScale = targetSize / rawGeometryBox.x;
-        if(axis === 'y') newScale = targetSize / rawGeometryBox.y;
-        if(axis === 'z') newScale = targetSize / rawGeometryBox.z;
-
-        modelGroup.scale.set(newScale, newScale, newScale);
-        
-        // Don't refit camera while typing, it's annoying. Just update numbers.
-        updateDimensionInputs(); 
-    }
-
-    function updateDimensionInputs() {
-        if(!modelGroup) return;
-        
-        // Calculate current Real-World size (Raw * Scale)
-        const currentX = rawGeometryBox.x * modelGroup.scale.x;
-        const currentY = rawGeometryBox.y * modelGroup.scale.y;
-        const currentZ = rawGeometryBox.z * modelGroup.scale.z;
-
-        // Update inputs (to 4 decimal places for precision)
-        document.getElementById('dim-x').value = currentX.toFixed(4);
-        document.getElementById('dim-y').value = currentY.toFixed(4);
-        document.getElementById('dim-z').value = currentZ.toFixed(4);
-    }
-
-    // --- CAMERA & VIEWING ---
-
-    function fitCameraToObj(group) {
-        const box = new THREE.Box3().setFromObject(group);
-        const size = new THREE.Vector3();
-        box.getSize(size);
-        const center = new THREE.Vector3();
-        box.getCenter(center);
-
-        const maxDim = Math.max(size.x, size.y, size.z);
-        
-        // Update Grid to match object scale (so it doesn't look like it's floating in void)
-        scene.remove(gridHelper);
-        const gridSize = Math.max(10, maxDim * 5);
-        const gridDivs = 10;
-        gridHelper = new THREE.GridHelper(gridSize, gridDivs, 0x444444, 0x222222);
-        scene.add(gridHelper);
-
-        // Adjust Clipping Planes (Crucial for tiny/huge objects)
-        camera.near = maxDim / 1000;
-        camera.far = maxDim * 100;
-        camera.updateProjectionMatrix();
-
-        // Move Camera
-        const fov = camera.fov * (Math.PI / 180);
-        let cameraZ = Math.abs(maxDim / 2 * Math.tan(fov * 2));
-        cameraZ *= 2.0; // Zoom out multiplier
-
-        camera.position.set(center.x + cameraZ, center.y + (cameraZ * 0.5), center.z + cameraZ);
-        camera.lookAt(center);
-        
-        controls.target.copy(center);
-        controls.update();
-    }
-
-    window.rotateModel = function(axis) {
-        if(!modelGroup) return;
-        modelGroup.rotation[axis] += Math.PI / 2;
-        fitCameraToObj(modelGroup); // Re-center in case rotation swings it out of view
-    }
-
-    // --- EXPORT ---
-
-    window.exportModel = async function() {
-        if(!modelGroup) return;
-        
-        const format = document.getElementById('export-format').value;
-        const btn = document.getElementById('btn-convert');
-        btn.disabled = true;
-        btn.innerText = "Processing...";
-
-        // Clone so we can bake the matrix without ruining the view
-        const exportScene = modelGroup.clone();
-        
-        // BAKE TRANSFORMATIONS: This makes the Scale/Rotation permanent in the geometry
-        exportScene.updateMatrixWorld(true);
-        exportScene.traverse((child) => {
-            if (child.isMesh) {
-                // Apply the group's scale/rotation to the mesh geometry directly
-                child.geometry.applyMatrix4(child.parent.matrixWorld);
-                child.updateMatrix(); // Reset matrix to identity
-            }
-        });
-        // Reset the group wrapper since we baked it into children
-        exportScene.scale.set(1,1,1);
-        exportScene.rotation.set(0,0,0);
-        exportScene.position.set(0,0,0);
-
-        try {
-            let data;
-            const filename = `${currentFileName}_AR.${format}`;
-
-            if(format === 'glb') {
-                const exp = new GLTFExporter();
-                data = await new Promise(r => exp.parse(exportScene, r, {binary:true}));
-                saveArrayBuffer(data, filename);
-            }
-            else if(format === 'usdz') {
-                const exp = new USDZExporter();
-                data = await exp.parse(exportScene);
-                saveArrayBuffer(data, filename);
-            }
-            else if(format === 'obj') {
-                const txt = new OBJExporter().parse(exportScene);
-                saveString(txt, filename);
-            }
-            else if(format === 'stl') {
-                const view = new STLExporter().parse(exportScene, {binary:true});
-                saveArrayBuffer(view.buffer, filename);
-            }
-
-        } catch(e) {
-            console.error(e);
-            alert("Export failed: " + e.message);
+        function fitCamera(size) {
+            if(isNaN(size) || size <= 0) size = 10;
+            
+            // Move camera back
+            const dist = size * 2;
+            camera.position.set(dist, dist, dist);
+            camera.lookAt(0,0,0);
+            controls.target.set(0,0,0);
+            
+            // Adjust Grid to roughly match size
+            scene.remove(grid);
+            const gridSize = Math.max(10, size * 2);
+            grid = new THREE.GridHelper(gridSize, 20, 0x444444, 0x222222);
+            scene.add(grid);
+            
+            // Adjust Clipping
+            camera.near = size / 1000;
+            camera.far = size * 100;
+            camera.updateProjectionMatrix();
         }
 
-        btn.disabled = false;
-        btn.innerText = "Download";
-    };
+        // --- SIZING LOGIC ---
+        
+        // 1. Get current size in ThreeJS Units (internally meters)
+        function updateGeometryData() {
+            if(!currentModel) return;
+            bbox.setFromObject(currentModel);
+            bbox.getSize(size); // size.x, size.y, size.z are in Three Units
+        }
 
-    function saveArrayBuffer(buffer, filename) {
-        const blob = new Blob([buffer], {type: 'application/octet-stream'});
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = filename;
-        link.click();
-    }
-    
-    function saveString(text, filename) {
-        const blob = new Blob([text], {type: 'text/plain'});
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = filename;
-        link.click();
-    }
+        // 2. Get multiplier based on UI dropdown
+        function getUnitMultiplier() {
+            const u = document.getElementById('unit-select').value;
+            if(u === 'mm') return 1000;
+            if(u === 'cm') return 100;
+            if(u === 'in') return 39.3701;
+            return 1; // Meters
+        }
 
-    // Init listeners
-    init();
-    
-    const dropZone = document.getElementById('drop-zone');
-    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.background = '#333'; });
-    dropZone.addEventListener('dragleave', e => { e.preventDefault(); dropZone.style.background = '#1a1a1a'; });
-    dropZone.addEventListener('drop', e => { 
-        e.preventDefault(); 
-        dropZone.style.background = '#1a1a1a';
-        if(e.dataTransfer.files.length) window.handleFiles(e.dataTransfer.files);
-    });
-    document.getElementById('file-input').addEventListener('change', e => {
-        if(e.target.files.length) window.handleFiles(e.target.files);
-    });
+        // 3. Update UI Input Fields based on Model Size
+        window.updateUI = function() {
+            if(!currentModel) return;
+            updateGeometryData();
 
-</script>
+            const mul = getUnitMultiplier();
+            const unitLabels = document.querySelectorAll('.unit-label');
+            const unit = document.getElementById('unit-select').value;
+            
+            unitLabels.forEach(el => el.innerText = unit);
+
+            // Display value = Internal Size * Multiplier
+            document.getElementById('dim-x').value = (size.x * mul).toFixed(2);
+            document.getElementById('dim-y').value = (size.y * mul).toFixed(2);
+            document.getElementById('dim-z').value = (size.z * mul).toFixed(2);
+        }
+
+        // 4. Resize Model when User Types
+        window.resizeFromUI = function(axis) {
+            if(!currentModel) return;
+            
+            const val = parseFloat(document.getElementById(`dim-${axis}`).value);
+            if(isNaN(val) || val <= 0) return;
+
+            // Calculate Scale Ratio
+            // We need to know current display size
+            const mul = getUnitMultiplier();
+            const currentDisplaySize = size[axis] * mul;
+            
+            const ratio = val / currentDisplaySize;
+            
+            // Apply Uniform Scale
+            currentModel.scale.multiplyScalar(ratio);
+            
+            updateGeometryData();
+            updateUI(); // Refreshes other axes
+            
+            // Adjust camera if size changed drastically
+            fitCamera(Math.max(size.x, size.y, size.z));
+        }
+
+        // 5. "Convert from..." Tools
+        // This is for fixing models that imported with the wrong scale factor (e.g. huge STL)
+        window.convertOriginalUnits = function(originalUnit) {
+            if(!currentModel) return;
+            
+            let scaleFactor = 1;
+            // If model is huge (e.g. 1000 units) because it was mm, 
+            // we want to shrink it to 1 meter (1000mm = 1m).
+            // So we multiply by 0.001
+            if(originalUnit === 'mm') scaleFactor = 0.001;
+            
+            // If model is tiny (1 unit) but user wants it to be 1000mm for printing
+            // scale up
+            if(originalUnit === 'm') scaleFactor = 1000;
+
+            currentModel.scale.multiplyScalar(scaleFactor);
+            
+            updateGeometryData();
+            updateUI();
+            fitCamera(Math.max(size.x, size.y, size.z));
+        }
+
+        // --- EXPORT ---
+
+        window.convert = async function() {
+            if (!currentModel) return;
+            const format = document.getElementById('export-format').value;
+            showStatus("Converting...", "Generating " + format.toUpperCase());
+
+            const exportGroup = currentModel.clone(true);
+            
+            // BAKING SCALE: Apply the scale to the geometry so export is correct size
+            exportGroup.updateMatrixWorld(true);
+            exportGroup.traverse((child) => {
+                if (child.isMesh) {
+                    child.geometry = child.geometry.clone(); // Clone geo to avoid messing up viewer
+                    child.geometry.applyMatrix4(child.parent.matrixWorld);
+                    child.scale.set(1,1,1);
+                    child.rotation.set(0,0,0);
+                    child.position.set(0,0,0);
+                }
+            });
+            // Reset wrapper
+            exportGroup.scale.set(1,1,1);
+            exportGroup.rotation.set(0,0,0);
+            
+            await prepareForExport(exportGroup, format);
+
+            try {
+                let data;
+                let mimeType = 'application/octet-stream';
+                let extension = format;
+
+                if (format === 'glb') {
+                    const exporter = new GLTFExporter();
+                    data = await new Promise((resolve, reject) => {
+                        exporter.parse(exportGroup, resolve, (err) => reject(err), { binary: true, embedImages: true });
+                    });
+                } 
+                else if (format === 'usdz') {
+                    const exporter = new USDZExporter();
+                    data = await new Promise((resolve, reject) => {
+                        try {
+                            exporter.parse(exportGroup).then(resolve).catch(reject);
+                        } catch (err) { reject(err); }
+                    });
+                }
+                else if (format === 'obj') { data = new OBJExporter().parse(exportGroup); mimeType = 'text/plain'; }
+                else if (format === 'stl') { data = new STLExporter().parse(exportGroup, { binary: true }); }
+
+                const blob = new Blob([data], { type: mimeType });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `${originalFileName}_edited.${extension}`;
+                document.body.appendChild(link);
+                link.click();
+                
+                setTimeout(() => { document.body.removeChild(link); URL.revokeObjectURL(url); hideStatus(); }, 100);
+
+            } catch (err) {
+                console.error(err);
+                alert("Failed: " + err.message);
+                hideStatus();
+            }
+        };
+
+        async function prepareForExport(group, format) {
+            const processes = [];
+
+            group.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    const materials = Array.isArray(child.material) ? child.material : [child.material];
+                    
+                    if (Array.isArray(child.material)) child.material = materials.map(m => m.clone());
+                    else child.material = child.material.clone();
+
+                    const matList = Array.isArray(child.material) ? child.material : [child.material];
+
+                    matList.forEach(mat => {
+                        if (format === 'usdz') mat.side = THREE.FrontSide; 
+                        if (mat.map && mat.map.image) {
+                            processes.push(new Promise(resolve => {
+                                const img = mat.map.image;
+                                if (img.width > 0 && img.height > 0) {
+                                    try {
+                                        const canvas = document.createElement('canvas');
+                                        canvas.width = img.width;
+                                        canvas.height = img.height;
+                                        const ctx = canvas.getContext('2d');
+                                        if (format === 'usdz') {
+                                            ctx.translate(0, img.height);
+                                            ctx.scale(1, -1);
+                                            mat.map.flipY = false;
+                                        }
+                                        ctx.drawImage(img, 0, 0);
+                                        mat.map.image = canvas;
+                                        mat.map.needsUpdate = true;
+                                    } catch (e) { console.warn(e); }
+                                }
+                                resolve();
+                            }));
+                        }
+                    });
+                }
+            });
+            await Promise.all(processes);
+        }
+
+        function convertToStandardMaterial(object) {
+            object.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    const old = Array.isArray(child.material) ? child.material[0] : child.material;
+                    if (child.material.type !== 'MeshStandardMaterial') {
+                        const mat = new THREE.MeshStandardMaterial();
+                        if(old.map) mat.map = old.map;
+                        if(old.color) mat.color.copy(old.color);
+                        mat.roughness = 0.5; mat.metalness = 0.1;
+                        mat.side = THREE.DoubleSide; 
+                        mat.transparent = old.transparent; 
+                        mat.opacity = old.opacity;
+                        child.material = mat;
+                    }
+                }
+            });
+        }
+
+        function showStatus(t, s) {
+            document.getElementById('status-text').innerText = t;
+            document.getElementById('status-sub').innerText = s;
+            document.getElementById('status-overlay').style.display = 'flex';
+        }
+        function hideStatus() { document.getElementById('status-overlay').style.display = 'none'; }
+
+        init();
+        setupRotationListeners();
+        
+        const dropZone = document.getElementById('drop-zone');
+        const input = document.getElementById('file-input');
+        input.addEventListener('change', (e) => { if(e.target.files.length) window.handleFiles(e.target.files); });
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.style.background='#333'; });
+        dropZone.addEventListener('dragleave', () => { dropZone.style.background='#222'; });
+        dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.style.background='#222'; if(e.dataTransfer.files.length) window.handleFiles(e.dataTransfer.files); });
+    </script>
 </body>
 </html>
